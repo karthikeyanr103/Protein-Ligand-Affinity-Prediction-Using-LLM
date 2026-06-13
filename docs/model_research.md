@@ -47,7 +47,7 @@ embedding.
 
 ## Practical limitation
 
-The linked community converter may export ProLLaMA as causal text generation. That graph is usable
-only if it exposes `last_hidden_state`; logits cannot replace the training embedding. Mol-LLaMA is
-exported manually with explicit 2D graph and 3D Uni-Mol tensor inputs. Even quantized, ProLLaMA 7B
-is large, so free-Space RAM and latency remain operational risks rather than GPU requirements.
+ProLLaMA is manually exported from its bare Llama decoder with `last_hidden_state` as the only
+output; its causal language-model head is excluded. Mol-LLaMA is manually exported with explicit
+2D graph and 3D Uni-Mol tensor inputs. Even quantized, ProLLaMA 7B is large, so free-Space RAM and
+latency remain operational risks rather than GPU requirements.

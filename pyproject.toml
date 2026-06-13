@@ -27,7 +27,6 @@ llm = [
 onnx = [
   "onnx>=1.16",
   "onnxruntime>=1.18",
-  "optimum-onnx>=0.0.3",
   "rdkit>=2024.3",
   "transformers>=4.43,<5",
 ]

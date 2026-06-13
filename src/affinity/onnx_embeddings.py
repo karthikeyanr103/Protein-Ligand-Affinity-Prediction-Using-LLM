@@ -95,7 +95,9 @@ class ProLLaMAOnnxEmbedder:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.session = None
         self.hidden_output = ""
-        for model_path in sorted(Path(model_directory).rglob("*.onnx")):
+        model_paths = sorted(Path(model_directory).rglob("*.onnx"))
+        model_paths.sort(key=lambda path: "int8" not in path.name.lower())
+        for model_path in model_paths:
             session = ort.InferenceSession(
                 str(model_path),
                 providers=["CPUExecutionProvider"],
@@ -138,8 +140,11 @@ class ProLLaMAOnnxEmbedder:
             if input_info.name in tokens:
                 feeds[input_info.name] = tokens[input_info.name].astype(np.int64)
             elif input_info.name == "position_ids":
-                length = tokens["input_ids"].shape[1]
-                feeds[input_info.name] = np.arange(length, dtype=np.int64)[None, :]
+                batch, length = tokens["input_ids"].shape
+                feeds[input_info.name] = np.broadcast_to(
+                    np.arange(length, dtype=np.int64)[None, :],
+                    (batch, length),
+                ).copy()
         hidden = self.session.run([self.hidden_output], feeds)[0]
         if hidden.ndim == 2:
             return hidden.astype(np.float32)

@@ -34,7 +34,13 @@ class MolLLaMAEncoderWrapper(nn.Module):
             encoded_edges = convolution.bond_encoder(edge_features)
             source, target = edge_index[0], edge_index[1]
             messages = F.relu(hidden[source] + encoded_edges)
-            aggregated = torch.zeros_like(hidden).index_add(0, target, messages)
+            node_ids = torch.arange(
+                hidden.shape[0],
+                dtype=target.dtype,
+                device=target.device,
+            )
+            incidence = node_ids.unsqueeze(1).eq(target.unsqueeze(0))
+            aggregated = incidence.to(messages.dtype).matmul(messages)
             hidden = convolution.mlp(
                 (1 + convolution.eps) * hidden + aggregated
             )
@@ -158,7 +164,7 @@ def export_mol_llama_onnx(
     torch.onnx.export(
         wrapper,
         inputs,
-        destination,
+        str(destination),
         input_names=[
             "src_tokens",
             "src_distance",

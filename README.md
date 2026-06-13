@@ -143,17 +143,29 @@ mean-pooled embedding used during training.
 
 ### 1. ProLLaMA
 
-Try the [Convert to ONNX Space](https://huggingface.co/spaces/onnx-community/convert-to-onnx).
-After conversion, inspect the graph outputs. It must be a feature-extraction graph with
-`last_hidden_state`, not only a causal text-generation graph.
-
-If the converted repository only contains logits, use the included feature export:
+The included manual exporter loads the causal model, selects its bare Llama decoder, excludes the
+language-model head, and exports `last_hidden_state` with dynamic batch and sequence dimensions:
 
 ```bash
 affinity-export-protein-onnx \
   --model-id GreatCaptainNemo/ProLLaMA \
-  --output artifacts/onnx/prollama
+  --output artifacts/onnx/prollama \
+  --dtype float32
 ```
+
+It saves weights as external ONNX data when supported and compares ONNX Runtime output against
+PyTorch. To produce INT8 as well:
+
+```bash
+affinity-export-protein-onnx \
+  --model-id GreatCaptainNemo/ProLLaMA \
+  --output artifacts/onnx/prollama \
+  --dtype float32 \
+  --quantize
+```
+
+INT8 conversion requires the float32 source model and substantially more temporary RAM. Convert
+without `--quantize` first and confirm parity before attempting quantization.
 
 ### 2. Mol-LLaMA molecular encoder
 
@@ -169,6 +181,10 @@ affinity-export-mol-onnx \
 This exports the architecture actually used for molecular embeddings:
 MoleculeSTM + Uni-Mol + blending module + Q-Former. It does not export the unused Llama text
 decoder. The output is `mean_qformer_query_tokens`, matching training.
+
+The exporter rewrites PyG's duplicate-index message aggregation as a standard ONNX incidence
+matrix multiplication. It then checks the rewrite against the official encoder and ONNX Runtime
+against PyTorch before accepting the model.
 
 The export directory contains:
 
