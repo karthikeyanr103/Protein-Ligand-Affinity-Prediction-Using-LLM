@@ -1,55 +1,36 @@
 import numpy as np
 import pytest
 
-from affinity.features import (
-    descriptor_matrix,
-    join_optional_embeddings,
-    protein_descriptors,
-    smiles_descriptors,
-)
+from affinity.features import build_embedding_features, save_embedding_table
 
 
-def test_feature_shapes_and_finite_values():
-    protein = protein_descriptors("ACDEFGHIKLMNPQRSTVWY")
-    molecule = smiles_descriptors("CC(=O)O")
-    combined = descriptor_matrix(["ACDE"], ["CCO"])
-    assert protein.shape == (27,)
-    assert molecule.shape == (23,)
-    assert combined.shape == (1, 50)
-    assert np.isfinite(combined).all()
-
-
-def test_llm_fusion_requires_both_embedding_tables(tmp_path):
-    with pytest.raises(ValueError, match="provided together"):
-        join_optional_embeddings(
-            np.zeros((1, 50), dtype=np.float32),
-            ["ACDE"],
-            ["CCO"],
-            protein_path=str(tmp_path / "protein.npz"),
-        )
-
-
-def test_llm_fusion_excludes_descriptors(tmp_path):
-    protein_path = tmp_path / "protein.npz"
-    molecule_path = tmp_path / "molecule.npz"
-    np.savez_compressed(
+def test_embedding_features_use_both_onnx_tables(tmp_path):
+    protein_path = tmp_path / "proteins.npz"
+    molecule_directory = tmp_path / "molecules"
+    save_embedding_table(
         protein_path,
-        keys=np.asarray(["ACDE"]),
-        embeddings=np.asarray([[1.0, 2.0]], dtype=np.float32),
-        model_id=np.asarray("protein-model"),
+        ["ACDE"],
+        np.asarray([[1.0, 2.0]], dtype=np.float32),
+        "protein-model",
+        {"runtime": "onnxruntime"},
     )
-    np.savez_compressed(
-        molecule_path,
-        keys=np.asarray(["CCO"]),
-        embeddings=np.asarray([[3.0, 4.0, 5.0]], dtype=np.float32),
-        model_id=np.asarray("molecule-model"),
+    save_embedding_table(
+        molecule_directory / "molecules-00000.npz",
+        ["CCO"],
+        np.asarray([[3.0, 4.0, 5.0]], dtype=np.float32),
+        "molecule-model",
+        {"runtime": "onnxruntime"},
     )
-    features, metadata = join_optional_embeddings(
-        np.zeros((1, 50), dtype=np.float32),
+    features, metadata = build_embedding_features(
         ["ACDE"],
         ["CCO"],
-        str(protein_path),
-        str(molecule_path),
+        protein_path,
+        molecule_directory,
     )
     assert features.tolist() == [[1.0, 2.0, 3.0, 4.0, 5.0]]
-    assert metadata["feature_mode"] == "llm_embeddings"
+    assert metadata["feature_mode"] == "onnx_embeddings"
+
+
+def test_embedding_features_require_both_tables(tmp_path):
+    with pytest.raises(ValueError, match="Both ONNX embedding tables"):
+        build_embedding_features(["ACDE"], ["CCO"], tmp_path / "protein.npz", "")

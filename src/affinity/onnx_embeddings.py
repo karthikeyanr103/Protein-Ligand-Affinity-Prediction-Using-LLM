@@ -89,13 +89,23 @@ class ProLLaMAOnnxEmbedder:
         import onnxruntime as ort
         from transformers import AutoTokenizer
 
+        directory = Path(model_directory)
         self.max_length = max_length
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+        tokenizer_source = (
+            directory if (directory / "tokenizer_config.json").exists() else tokenizer_id
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
+        metadata_path = directory / "export_metadata.json"
+        self.metadata = (
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata_path.exists()
+            else {}
+        )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.session = None
         self.hidden_output = ""
-        model_paths = sorted(Path(model_directory).rglob("*.onnx"))
+        model_paths = sorted(directory.rglob("*.onnx"))
         model_paths.sort(key=lambda path: "int8" not in path.name.lower())
         for model_path in model_paths:
             session = ort.InferenceSession(

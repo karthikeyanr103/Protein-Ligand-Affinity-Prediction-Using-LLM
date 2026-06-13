@@ -1,60 +1,10 @@
 from __future__ import annotations
 
-from collections import Counter
 import json
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
-
-AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
-SMILES_TOKENS = (
-    "C", "N", "O", "S", "P", "F", "Cl", "Br", "I",
-    "=", "#", "(", ")", "[", "]", "+", "-", "@",
-)
-PROTEIN_GROUPS = {
-    "hydrophobic": set("AVILMFWY"),
-    "polar": set("STNQ"),
-    "positive": set("KRH"),
-    "negative": set("DE"),
-    "special": set("CGP"),
-}
-
-
-def protein_descriptors(sequence: str) -> np.ndarray:
-    sequence = sequence.strip().upper()
-    if not sequence:
-        raise ValueError("Protein sequence is empty")
-    counts = Counter(sequence)
-    length = len(sequence)
-    composition = [counts[aa] / length for aa in AMINO_ACIDS]
-    groups = [sum(counts[aa] for aa in members) / length for members in PROTEIN_GROUPS.values()]
-    length_features = [np.log1p(length) / 10.0, min(length, 4096) / 4096.0]
-    return np.asarray(composition + groups + length_features, dtype=np.float32)
-
-
-def smiles_descriptors(smiles: str) -> np.ndarray:
-    smiles = smiles.strip()
-    if not smiles:
-        raise ValueError("SMILES is empty")
-    length = len(smiles)
-    token_frequencies = [smiles.count(token) / length for token in SMILES_TOKENS]
-    structural = [
-        np.log1p(length) / 10.0,
-        min(length, 512) / 512.0,
-        sum(char.isdigit() for char in smiles) / length,
-        sum(char.islower() for char in smiles) / length,
-        smiles.count(".") / length,
-    ]
-    return np.asarray(token_frequencies + structural, dtype=np.float32)
-
-
-def descriptor_matrix(proteins: Iterable[str], smiles_values: Iterable[str]) -> np.ndarray:
-    rows = [
-        np.concatenate([protein_descriptors(protein), smiles_descriptors(smiles)])
-        for protein, smiles in zip(proteins, smiles_values, strict=True)
-    ]
-    return np.stack(rows).astype(np.float32)
 
 
 def save_embedding_table(
@@ -78,46 +28,56 @@ def save_embedding_table(
 
 
 def load_embedding_table(path: str | Path) -> tuple[dict[str, np.ndarray], str, dict]:
-    table = np.load(path, allow_pickle=False)
-    mapping = dict(zip(table["keys"].tolist(), table["embeddings"], strict=True))
-    model_id = str(table["model_id"].item())
-    settings = (
-        json.loads(str(table["settings_json"].item()))
-        if "settings_json" in table.files
-        else {}
-    )
+    source = Path(path)
+    files = sorted(source.glob("*.npz")) if source.is_dir() else [source]
+    if not files:
+        raise FileNotFoundError(f"No embedding files found at {source}")
+    mapping: dict[str, np.ndarray] = {}
+    model_id = ""
+    settings: dict = {}
+    for file in files:
+        table = np.load(file, allow_pickle=False)
+        current_model = str(table["model_id"].item())
+        current_settings = (
+            json.loads(str(table["settings_json"].item()))
+            if "settings_json" in table.files
+            else {}
+        )
+        if model_id and current_model != model_id:
+            raise ValueError(f"Embedding model mismatch in {file}")
+        if settings and current_settings != settings:
+            raise ValueError(f"Embedding settings mismatch in {file}")
+        model_id = current_model
+        settings = current_settings
+        mapping.update(zip(table["keys"].tolist(), table["embeddings"], strict=True))
     return mapping, model_id, settings
 
 
-def join_optional_embeddings(
-    base_features: np.ndarray,
+def build_embedding_features(
     proteins: Iterable[str],
     smiles_values: Iterable[str],
-    protein_path: str = "",
-    molecule_path: str = "",
+    protein_path: str | Path,
+    molecule_path: str | Path,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    if bool(protein_path) != bool(molecule_path):
-        raise ValueError(
-            "Protein and molecule embedding tables must be provided together for LLM fusion"
-        )
-    blocks = [] if protein_path else [base_features]
-    metadata: dict[str, object] = {
-        "feature_mode": "llm_embeddings" if protein_path else "descriptors"
-    }
-    if protein_path:
-        table, model_id, settings = load_embedding_table(protein_path)
-        try:
-            blocks.append(np.stack([table[value] for value in proteins]).astype(np.float32))
-        except KeyError as error:
-            raise KeyError(f"Missing protein embedding for sequence: {str(error)[:80]}") from error
-        metadata["protein_model"] = model_id
-        metadata["protein_extraction"] = settings
-    if molecule_path:
-        table, model_id, settings = load_embedding_table(molecule_path)
-        try:
-            blocks.append(np.stack([table[value] for value in smiles_values]).astype(np.float32))
-        except KeyError as error:
-            raise KeyError(f"Missing molecule embedding for SMILES: {error}") from error
-        metadata["molecule_model"] = model_id
-        metadata["molecule_extraction"] = settings
-    return np.concatenate(blocks, axis=1), metadata
+    if not protein_path or not molecule_path:
+        raise ValueError("Both ONNX embedding tables are required")
+    protein_table, protein_model, protein_settings = load_embedding_table(protein_path)
+    molecule_table, molecule_model, molecule_settings = load_embedding_table(molecule_path)
+    try:
+        protein_block = np.stack([protein_table[value] for value in proteins])
+    except KeyError as error:
+        raise KeyError(f"Missing protein embedding: {str(error)[:80]}") from error
+    try:
+        molecule_block = np.stack([molecule_table[value] for value in smiles_values])
+    except KeyError as error:
+        raise KeyError(f"Missing molecule embedding: {error}") from error
+    return (
+        np.concatenate([protein_block, molecule_block], axis=1).astype(np.float32),
+        {
+            "feature_mode": "onnx_embeddings",
+            "protein_model": protein_model,
+            "protein_extraction": protein_settings,
+            "molecule_model": molecule_model,
+            "molecule_extraction": molecule_settings,
+        },
+    )

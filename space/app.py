@@ -30,19 +30,57 @@ def validate_smiles(smiles: str) -> str:
     return smiles
 
 
-def _download_repo(variable: str) -> Path:
-    repo_id = os.getenv(variable, "")
+def _resolve_model(
+    local_variable: str,
+    repo_variable: str,
+    allow_patterns: list[str],
+) -> Path:
+    local_path = os.getenv(local_variable, "")
+    if local_path:
+        path = Path(local_path).expanduser().resolve()
+        if not path.exists():
+            raise RuntimeError(f"Local model path does not exist: {path}")
+        return path
+    repo_id = os.getenv(repo_variable, "")
     if not repo_id:
-        raise RuntimeError(f"Set the {variable} Space variable")
-    return Path(snapshot_download(repo_id, token=os.getenv("HF_TOKEN")))
+        raise RuntimeError(f"Set {local_variable} or {repo_variable}")
+    return Path(
+        snapshot_download(
+            repo_id,
+            token=os.getenv("HF_TOKEN"),
+            allow_patterns=allow_patterns,
+        )
+    )
 
 
 @lru_cache(maxsize=1)
 def get_predictor() -> ThreeOnnxAffinityPredictor:
+    pro_variant = os.getenv("PROLLAMA_ONNX_VARIANT", "int8").lower()
+    mol_variant = os.getenv("MOL_LLAMA_ONNX_VARIANT", "int8").lower()
+    pro_pattern = "*int8*" if pro_variant == "int8" else "prollama_encoder.onnx*"
+    mol_pattern = "*int8*" if mol_variant == "int8" else "mol_llama_encoder.onnx*"
     return ThreeOnnxAffinityPredictor(
-        artifact_directory=_download_repo("AFFINITY_MODEL_REPO"),
-        prollama_directory=_download_repo("PROLLAMA_ONNX_REPO"),
-        mol_llama_directory=_download_repo("MOL_LLAMA_ONNX_REPO"),
+        artifact_directory=_resolve_model(
+            "AFFINITY_MODEL_PATH",
+            "AFFINITY_MODEL_REPO",
+            ["model.onnx", "normalization.npz", "metadata.json"],
+        ),
+        prollama_directory=_resolve_model(
+            "PROLLAMA_ONNX_PATH",
+            "PROLLAMA_ONNX_REPO",
+            [
+                pro_pattern,
+                "tokenizer*",
+                "special_tokens_map.json",
+                "config.json",
+                "export_metadata.json",
+            ],
+        ),
+        mol_llama_directory=_resolve_model(
+            "MOL_LLAMA_ONNX_PATH",
+            "MOL_LLAMA_ONNX_REPO",
+            [mol_pattern, "unimol_dictionary.json", "export_metadata.json"],
+        ),
     )
 
 
@@ -86,7 +124,9 @@ def molecule_2d(smiles: str):
 
 def molecule_3d(smiles: str) -> str:
     molecule = Chem.AddHs(Chem.MolFromSmiles(validate_smiles(smiles)))
-    if AllChem.EmbedMolecule(molecule, AllChem.ETKDGv3()) != 0:
+    parameters = AllChem.ETKDGv3()
+    parameters.randomSeed = 42
+    if AllChem.EmbedMolecule(molecule, parameters) != 0:
         raise gr.Error("RDKit could not generate a conformer for this molecule.")
     AllChem.MMFFOptimizeMolecule(molecule, maxIters=500)
     viewer = py3Dmol.view(width=800, height=500)
@@ -119,7 +159,7 @@ with gr.Blocks(title="Protein-Compound Affinity Explorer") as demo:
     with gr.Tab("Predict"):
         protein = gr.Textbox(label="Protein sequence", lines=6, value=EXAMPLE_PROTEIN)
         smiles = gr.Textbox(label="Compound SMILES", value=EXAMPLE_SMILES)
-        run = gr.Button("Predict with both LLMs", variant="primary")
+        run = gr.Button("Run ONNX inference", variant="primary")
         score = gr.Number(label="Predicted affinity label")
         molecule_data = gr.JSON(label="Molecule descriptors")
         protein_data = gr.JSON(label="Protein descriptors")

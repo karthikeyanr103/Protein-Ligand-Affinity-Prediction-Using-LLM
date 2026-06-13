@@ -1,280 +1,373 @@
-# Protein-Ligand Affinity Prediction Using Molecular and Protein LLMs
+<div align="center">
 
-Portfolio-ready training, evaluation, ONNX inference, structural exploration, and Hugging Face
-deployment for the Kaggle
-[Protein-Compound Affinity](https://www.kaggle.com/competitions/protein-compound-affinity/data)
-dataset.
+# 🧬 Protein-Compound Affinity Prediction
 
-The repository supports two experiment tiers:
+### ProLLaMA ONNX + Mol-LLaMA ONNX + Affinity ONNX
 
-1. **Reproducible baseline:** 50 deterministic protein/SMILES descriptors for CI and comparison.
-2. **Kaggle GPU experiment:** cached frozen embeddings from
-   [ProLLaMA](https://huggingface.co/GreatCaptainNemo/ProLLaMA) and
-   [Mol-LLaMA](https://huggingface.co/DongkiKim/Mol-Llama-3.1-8B-Instruct), fused by the same
-   regression head.
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1000&color=005CED&center=true&vCenter=true&width=720&lines=Export+scientific+LLMs+to+ONNX;Build+protein+and+molecule+embeddings;Train+and+deploy+an+affinity+regressor" alt="Animated project workflow" />
 
-## What This Project Does
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CED?logo=onnx&logoColor=white)
+![Colab](https://img.shields.io/badge/Training-Google_Colab-F9AB00?logo=googlecolab&logoColor=white)
+![Hugging Face](https://img.shields.io/badge/Deployment-Hugging_Face-FFD21E)
+
+Protein-compound affinity prediction using two frozen scientific language-model encoders and a
+small trainable regression head.
+
+</div>
+
+---
+
+## 🌟 Project Idea
+
+The project takes two inputs:
+
+- a protein amino-acid sequence;
+- a compound represented as a SMILES string.
+
+Each input is converted into an embedding by an ONNX encoder. The embeddings are concatenated and
+passed to a regression model that predicts the dataset affinity label.
 
 ```mermaid
 flowchart LR
-    A["Protein sequence"] --> B["Live ProLLaMA embedding"]
-    C["Compound SMILES + generated conformer"] --> D["Live Mol-LLaMA Q-Former embedding"]
-    B --> E["Feature fusion MLP"]
-    D --> E
-    E --> F["Affinity prediction"]
-    E --> G["ONNX export"]
-    G --> H["Hugging Face CPU Docker Space"]
+    P["🧬 Protein sequence"] --> PRO["ProLLaMA ONNX"]
+    S["💊 Compound SMILES"] --> MOL["Mol-LLaMA ONNX"]
+    PRO --> PE["Protein embedding"]
+    MOL --> ME["Molecule embedding"]
+    PE --> F["Feature fusion"]
+    ME --> F
+    F --> A["Affinity ONNX"]
+    A --> Y["📈 Predicted affinity"]
 ```
 
-- Validates the CSV schema and amino-acid alphabet.
-- Profiles protein lengths, SMILES lengths, duplicate pairs, and target distribution.
-- Creates deterministic `cold_protein`, `cold_compound`, pair, or random splits.
-- Trains with AdamW, validation RMSE checkpointing, and early stopping.
-- Reports MAE, RMSE, R-squared, and Pearson correlation.
-- Exports the compact regression model to ONNX with dynamic batch size.
-- Renders compounds in 2D and generated 3D conformations.
-- Renders uploaded experimental/predicted protein PDB structures.
-- Deploys to Hugging Face with GitHub Actions only. No AWS services are used.
+The final application uses **three ONNX models**. PyTorch is not required during deployment.
 
-## Dataset Findings
+## 🧠 Models
 
-These values were measured from the supplied `data/train.csv` on June 13, 2026:
+| Component | Source model | Representation |
+|---|---|---|
+| Protein encoder | [GreatCaptainNemo/ProLLaMA](https://huggingface.co/GreatCaptainNemo/ProLLaMA) | Mean-pooled final hidden state |
+| Molecule encoder | [DongkiKim/Mol-Llama-3.1-8B-Instruct](https://huggingface.co/DongkiKim/Mol-Llama-3.1-8B-Instruct) | Mean-pooled Q-Former query tokens |
+| Affinity model | MLP trained in this repository | One regression value |
 
-| Property | Value |
-|---|---:|
-| Rows | 263,583 |
-| Unique proteins | 2,665 |
-| Unique compounds | 196,029 |
-| Unique protein-compound pairs | 256,296 |
-| Exact duplicate pairs | 7,287 |
-| Protein length | 66 to 1,484; mean 582.75 |
-| SMILES length | 2 to 100; mean 56.89 |
-| Label | 2.0 to 11.0; mean 6.34; standard deviation 1.48 |
-| Missing values | 0 |
+Research papers:
 
-Because only 2,665 proteins occur across 263,583 rows, a random row split leaks protein identity
-across train and test. The default is therefore `cold_protein`.
+- [ProLLaMA: A Protein Large Language Model for Multi-Task Protein Language Processing](https://arxiv.org/abs/2402.16445)
+- [Mol-LLaMA: Towards General Understanding of Molecules in Large Molecular Language Model](https://arxiv.org/abs/2502.13449)
 
-The CSV itself does not define the target's physical units. Confirm the exact label definition on
-the Kaggle competition overview before interpreting predictions as pKd, pKi, or another quantity.
+Mol-LLaMA contains an 8B Llama decoder, but that decoder is not required for the molecular
+embedding. The exported molecular graph contains:
 
-## Models
+- MoleculeSTM 2D encoder;
+- Uni-Mol 3D encoder;
+- modality blending module;
+- Q-Former.
 
-| Model | Backbone | Domain training and architecture | Role here |
-|---|---|---|---|
-| Mol-LLaMA | Llama 3.1 8B Instruct | Mol-LLaMA-Instruct; MoleculeSTM 2D encoder, Uni-Mol 3D encoder, blending cross-attention, SciBERT Q-Former, LoRA | Frozen molecular features |
-| ProLLaMA | Llama-2-7B | About 13M multi-task protein instruction samples with superfamily information; Protein Vocabulary Pruning | Frozen protein features |
-| Fusion regressor | Compact MLP | Trained on this competition dataset | Affinity regression and ONNX deployment |
-
-Read [model research](docs/model_research.md) for paper links, datasets, backbone details, and the
-ONNX limitation. Read [experiment protocol](docs/experiment_protocol.md) for training, validation,
-testing, and inference rules.
-
-## Repository Layout
+## 🗂️ Repository
 
 ```text
 .
-|-- .github/workflows/       # CI, model publishing, Space deployment
-|-- configs/                 # TOML experiment configurations
+|-- app.py                         # Local Gradio application
+|-- configs/
+|   `-- colab.toml                 # Training configuration example
 |-- data/
-|   `-- sample_train.csv     # Versioned 512-row representative sample
-|-- docs/                    # Model research and experimental protocol
+|   `-- sample_train.csv           # Small test fixture
 |-- notebooks/
-|   `-- kaggle_training.ipynb
-|-- scripts/
-|   `-- eda.py
-|-- space/                   # Gradio Hugging Face Space
-|-- src/affinity/            # Data, features, model, train, evaluate, ONNX
+|   |-- 01_export_llms_to_onnx.ipynb
+|   |-- 02_build_embedding_dataset.ipynb
+|   `-- 03_train_validate_export.ipynb
+|-- space/                         # Hugging Face Docker Space
+|-- src/affinity/                  # Export, extraction, training and inference code
 |-- tests/
 |-- MODEL_CARD.md
 `-- pyproject.toml
 ```
 
-The 172 MB full CSV is ignored by Git. Only the representative sample is committed.
+GitHub Actions are intentionally not used. Large ONNX and embedding files are transferred directly
+between Colab, Google Drive and Hugging Face.
 
-## Local Quick Start
+## 📚 Notebook Workflow
+
+Run the notebooks in numerical order. Each notebook is independent and reads the previous stage
+from Hugging Face.
+
+### 1️⃣ Export Both LLM Encoders
+
+Open:
+
+[`01_export_llms_to_onnx.ipynb`](notebooks/01_export_llms_to_onnx.ipynb)
+
+This notebook:
+
+1. installs the project and official Mol-LLaMA code;
+2. exports ProLLaMA without its language-model head;
+3. exports the Mol-LLaMA molecular encoder;
+4. creates INT8 ONNX versions;
+5. runs PyTorch-to-ONNX parity checks;
+6. runs sample embedding inference;
+7. uploads two Hugging Face model repositories.
+
+Edit these values before uploading:
+
+```python
+HF_USER = "your-huggingface-username"
+PRO_REPO = f"{HF_USER}/prollama-affinity-onnx"
+MOL_REPO = f"{HF_USER}/mol-llama-affinity-onnx"
+```
+
+Expected repositories:
+
+```text
+your-name/prollama-affinity-onnx
+your-name/mol-llama-affinity-onnx
+```
+
+### 2️⃣ Build and Upload the Embedding Dataset
+
+Open:
+
+[`02_build_embedding_dataset.ipynb`](notebooks/02_build_embedding_dataset.ipynb)
+
+This notebook:
+
+1. downloads both ONNX encoders;
+2. validates the source CSV;
+3. extracts one embedding for every unique protein;
+4. extracts one embedding for every unique molecule;
+5. saves molecule embeddings in resumable shards;
+6. creates cold-protein train, validation and test splits;
+7. uploads a Hugging Face dataset.
+
+The dataset repository contains:
+
+```text
+train.csv
+validation.csv
+test.csv
+train_features.npz
+validation_features.npz
+test_features.npz
+dataset_metadata.json
+```
+
+CSV files contain sequences, SMILES and labels. Embeddings are stored in compressed NPZ matrices.
+Putting thousands of floating-point values inside CSV cells would be much larger and slower.
+
+Expected dataset repository:
+
+```text
+your-name/protein-compound-affinity-embeddings
+```
+
+### 3️⃣ Train, Validate and Export
+
+Open:
+
+[`03_train_validate_export.ipynb`](notebooks/03_train_validate_export.ipynb)
+
+This notebook:
+
+1. downloads the fixed embedding dataset;
+2. standardizes features using training statistics only;
+3. trains the fusion MLP;
+4. selects the best validation-RMSE checkpoint;
+5. evaluates the held-out test split;
+6. exports the trained head to ONNX;
+7. verifies PyTorch/ONNX parity;
+8. uploads the final model repository.
+
+Reported metrics:
+
+- MAE;
+- RMSE;
+- R²;
+- Pearson correlation.
+
+Expected model repository:
+
+```text
+your-name/protein-compound-affinity-onnx
+```
+
+## 🔀 Data Splitting
+
+The source dataset contains many repeated proteins. A random row split would place the same protein
+in training and testing and produce an overly optimistic result.
+
+The default split is **cold protein**:
+
+```mermaid
+flowchart TB
+    D["All protein-compound rows"] --> G["Group by protein sequence"]
+    G --> TR["80% protein groups: train"]
+    G --> VA["10% protein groups: validation"]
+    G --> TE["10% protein groups: test"]
+```
+
+A protein sequence belongs to exactly one split.
+
+## 💻 Colab Runtime
+
+The notebooks target Python 3.11.
+
+Use a Colab TPU runtime with a high-memory host when available. The TPU cores are not used by ONNX
+export or ONNX Runtime. TPU mode is useful here because the VM may provide more host RAM.
+
+Approximate weight sizes:
+
+| Model | FP32 | INT8 |
+|---|---:|---:|
+| ProLLaMA 7B | ~28 GB | ~7 GB |
+| Full Mol-LLaMA 8B | ~32 GB | ~8 GB |
+
+The Mol-LLaMA export excludes the 8B text decoder, so its final molecular ONNX graph is much
+smaller than the full checkpoint.
+
+Peak export memory is higher than final file size because PyTorch weights, the ONNX graph and
+temporary conversion data may exist at the same time.
+
+## 🧪 Local Web Inference
+
+Download these three Hugging Face model repositories:
+
+```text
+prollama-affinity-onnx/
+mol-llama-affinity-onnx/
+protein-compound-affinity-onnx/
+```
+
+Install the runtime:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate             # Windows: .venv\Scripts\activate
-pip install -e ".[dev,onnx,analysis]"
 
-affinity-profile --data data/sample_train.csv
-affinity-train --config configs/baseline.toml
-affinity-export-onnx --artifacts artifacts/baseline
+# Linux/macOS
+source .venv/bin/activate
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+pip install -e ".[space]"
 ```
 
-The baseline is only a fast comparison. For the actual LLM pipeline, install the LLM dependencies,
-clone the official Mol-LLaMA repository, extract both caches, train, and export:
+Start the local application:
 
 ```bash
-pip install -e ".[llm,onnx]"
-git clone https://github.com/DongkiKim95/Mol-LLaMA external/Mol-LLaMA
-
-python -m affinity.llm_embeddings \
-  --data data/train.csv \
-  --column protein_sequence \
-  --model-id GreatCaptainNemo/ProLLaMA \
-  --output artifacts/features/prollama_embeddings.npz \
-  --max-length 1536
-
-affinity-mol-embeddings \
-  --data data/train.csv \
-  --official-repo external/Mol-LLaMA \
-  --output artifacts/features/mol_llama_embeddings.npz
-
-# Update configs/kaggle_llm.toml paths for the local machine first.
-affinity-train --config configs/kaggle_llm.toml
-affinity-export-onnx --artifacts artifacts/llm_fusion
-
-affinity-predict \
-  --artifacts artifacts/llm_fusion \
-  --prollama-onnx artifacts/onnx/prollama \
-  --mol-llama-onnx artifacts/onnx/mol_llama \
-  --protein "MAVMKNYLLPILVLFLAYYYYSTNEE" \
-  --smiles "CC(=O)O"
+python app.py \
+  --prollama ./models/prollama-affinity-onnx \
+  --mol-llama ./models/mol-llama-affinity-onnx \
+  --affinity ./models/protein-compound-affinity-onnx
 ```
 
-Inference runs three ONNX Runtime CPU sessions. The ProLLaMA graph must expose
-`last_hidden_state`; a text-generation graph that exposes only `logits` is not compatible with the
-mean-pooled embedding used during training.
+Windows PowerShell:
 
-## Export The Three ONNX Models
+```powershell
+python app.py `
+  --prollama .\models\prollama-affinity-onnx `
+  --mol-llama .\models\mol-llama-affinity-onnx `
+  --affinity .\models\protein-compound-affinity-onnx
+```
 
-### 1. ProLLaMA
+Open:
 
-The included manual exporter loads the causal model, selects its bare Llama decoder, excludes the
-language-model head, and exports `last_hidden_state` with dynamic batch and sequence dimensions:
+```text
+http://127.0.0.1:7860
+```
+
+The UI provides:
+
+- affinity prediction;
+- protein sequence summary;
+- molecule descriptors;
+- molecule 2D rendering;
+- deterministic molecule 3D conformer rendering;
+- uploaded PDB protein rendering.
+
+## 🤗 Hugging Face Space Deployment
+
+Create a new **Docker Space**.
+
+Upload the contents of `space/` to the Space repository:
 
 ```bash
-affinity-export-protein-onnx \
-  --model-id GreatCaptainNemo/ProLLaMA \
-  --output artifacts/onnx/prollama \
-  --dtype float32
+huggingface-cli upload YOUR_NAME/YOUR_SPACE ./space . \
+  --repo-type space
 ```
 
-It saves weights as external ONNX data when supported and compares ONNX Runtime output against
-PyTorch. To produce INT8 as well:
+Add these Space variables:
 
-```bash
-affinity-export-protein-onnx \
-  --model-id GreatCaptainNemo/ProLLaMA \
-  --output artifacts/onnx/prollama \
-  --dtype float32 \
-  --quantize
+```text
+PROLLAMA_ONNX_REPO=your-name/prollama-affinity-onnx
+MOL_LLAMA_ONNX_REPO=your-name/mol-llama-affinity-onnx
+AFFINITY_MODEL_REPO=your-name/protein-compound-affinity-onnx
 ```
 
-INT8 conversion requires the float32 source model and substantially more temporary RAM. Convert
-without `--quantize` first and confirm parity before attempting quantization.
+The Space defaults to INT8 encoder files:
 
-### 2. Mol-LLaMA molecular encoder
-
-Run this once in Kaggle or another machine that can load the original model:
-
-```bash
-affinity-export-mol-onnx \
-  --official-repo external/Mol-LLaMA \
-  --output artifacts/onnx/mol_llama \
-  --quantize
+```text
+PROLLAMA_ONNX_VARIANT=int8
+MOL_LLAMA_ONNX_VARIANT=int8
 ```
 
-This exports the architecture actually used for molecular embeddings:
-MoleculeSTM + Uni-Mol + blending module + Q-Former. It does not export the unused Llama text
-decoder. The output is `mean_qformer_query_tokens`, matching training.
+If a repository only contains float32:
 
-The exporter rewrites PyG's duplicate-index message aggregation as a standard ONNX incidence
-matrix multiplication. It then checks the rewrite against the official encoder and ONNX Runtime
-against PyTorch before accepting the model.
-
-The export directory contains:
-
-- `mol_llama_encoder.onnx`
-- `mol_llama_encoder_int8.onnx` when `--quantize` is used
-- `unimol_dictionary.json`
-- `export_metadata.json`
-
-### 3. Affinity head
-
-For exact training/inference parity, build the training caches with the converted ONNX encoders:
-
-```bash
-affinity-extract-onnx \
-  --data data/train.csv \
-  --prollama-onnx artifacts/onnx/prollama \
-  --mol-llama-onnx artifacts/onnx/mol_llama \
-  --protein-output artifacts/features/prollama_embeddings.npz \
-  --molecule-output artifacts/features/mol_llama_embeddings.npz
+```text
+PROLLAMA_ONNX_VARIANT=fp32
+MOL_LLAMA_ONNX_VARIANT=fp32
 ```
 
-Then train and export the third model:
+Add `HF_TOKEN` as a Space secret when any model repository is private.
 
-```bash
-affinity-train --config configs/kaggle_llm.toml
-affinity-export-onnx --artifacts artifacts/llm_fusion
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as HF Space
+    participant P as ProLLaMA ONNX
+    participant M as Mol-LLaMA ONNX
+    participant A as Affinity ONNX
+    U->>S: Protein + SMILES
+    S->>P: Tokenized protein prompt
+    P-->>S: Protein embedding
+    S->>M: 2D graph + 3D conformer tensors
+    M-->>S: Molecule embedding
+    S->>A: Standardized fused embedding
+    A-->>S: Affinity prediction
+    S-->>U: Result and visual analysis
 ```
 
-Create a different representative sample from the full CSV:
+## ⚠️ Deployment Limits
 
-```bash
-affinity-profile \
-  --data data/train.csv \
-  --sample-rows 512 \
-  --output data/sample_train.csv
-```
+ONNX removes the PyTorch runtime requirement, but it does not make a 7B model small. ProLLaMA INT8
+is still several gigabytes. Free Hugging Face CPU Spaces may be limited by:
 
-Create EDA outputs:
+- RAM;
+- repository download time;
+- disk size;
+- cold-start time;
+- CPU inference latency.
 
-```bash
-python scripts/eda.py --data data/train.csv --output artifacts/eda
-```
+The application queues one prediction at a time to avoid loading duplicate model sessions.
 
-## Kaggle Training
+## 🔬 Reproducibility
 
-Use [kaggle_training.ipynb](notebooks/kaggle_training.ipynb) with a GPU accelerator.
+The workflow records:
 
-1. Add the competition dataset and this GitHub repository as Kaggle inputs.
-2. Enable internet only while downloading gated model weights, if competition rules allow it.
-3. Add `HF_TOKEN` as a Kaggle secret and accept the Meta Llama model license.
-4. Run the descriptor baseline first.
-5. Convert ProLLaMA and Mol-LLaMA to ONNX.
-6. Run `affinity-extract-onnx` once per unique protein and compound.
-7. Point `configs/kaggle_llm.toml` at those exact ONNX-generated caches.
-8. Train and export the affinity head as the third ONNX model.
+- model repository IDs;
+- protein prompt and maximum length;
+- embedding pooling rules;
+- deterministic conformer seed;
+- Uni-Mol dictionary;
+- split strategy and seed;
+- normalization mean and standard deviation;
+- final test metrics.
 
-Full end-to-end fine-tuning of both 7B/8B models is unnecessary and unlikely to fit a standard
-Kaggle GPU. Freeze the backbones, cache embeddings, and train only the fusion head. LoRA on a
-single backbone can be a later ablation.
+Both LLM embedding caches are created with the same INT8 ONNX graphs used during deployment.
 
-## Hugging Face Deployment
+## 🛡️ Scope
 
-Create:
+This is a portfolio and research project.
 
-- A Hugging Face model repository containing `model.onnx`, `normalization.npz`, and
-  `metadata.json`.
-- A Hugging Face Docker Space using CPU hardware.
-- GitHub secret `HF_TOKEN`.
-- GitHub variables `HF_MODEL_ID` and `HF_SPACE_ID`.
-- Space variable `AFFINITY_MODEL_REPO` pointing to the regression model repository.
-- Space variable `PROLLAMA_ONNX_REPO` pointing to the ProLLaMA feature-extraction ONNX repository.
-- Space variable `MOL_LLAMA_ONNX_REPO` pointing to the Mol-LLaMA encoder ONNX repository.
-
-After Kaggle training, place `model.onnx`, `normalization.npz`, and `metadata.json` in
-`release/model/` and commit that release bundle. Run `Publish ONNX Model`, then
-`Deploy Hugging Face Space`.
-
-The Space initializes three ONNX Runtime sessions and uses no PyTorch model at inference. A
-quantized ProLLaMA 7B graph is still several gigabytes and CPU inference can be slow; free Space
-RAM and startup limits may still be the practical constraint. No AWS setup is required.
-
-## 3D Scope
-
-- **Molecule:** RDKit generates and optimizes a conformer from SMILES for interactive viewing.
-- **Protein:** upload a PDB file from an experiment or a separate structure predictor such as
-  AlphaFold/ESMFold. The amino-acid sequence alone contains no explicit atomic coordinates.
-- **Complex:** this project does not claim to predict a protein-ligand binding pose. That requires a
-  docking or complex-structure model and should be evaluated separately.
-
-## Responsible Use
-
-This is a research and portfolio project. Predictions are not experimental measurements, medical
-advice, or evidence that a compound is safe or effective.
+- A generated conformer is not an experimental structure.
+- The model does not predict a protein-ligand binding pose.
+- The affinity output is not clinical evidence.
+- Results should not be used as a replacement for laboratory validation.

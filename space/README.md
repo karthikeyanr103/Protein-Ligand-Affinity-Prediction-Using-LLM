@@ -13,3 +13,6 @@ license: apache-2.0
 CPU inference through three ONNX graphs: ProLLaMA feature extraction, Mol-LLaMA molecular encoding,
 and affinity regression. Configure `PROLLAMA_ONNX_REPO`, `MOL_LLAMA_ONNX_REPO`,
 `AFFINITY_MODEL_REPO`, and optionally `HF_TOKEN`.
+
+The default encoder variant is `int8`. Set `PROLLAMA_ONNX_VARIANT=fp32` or
+`MOL_LLAMA_ONNX_VARIANT=fp32` when a quantized graph is not available.

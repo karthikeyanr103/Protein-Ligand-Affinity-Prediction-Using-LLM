@@ -7,17 +7,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class DataConfig:
-    path: str = "data/sample_train.csv"
-    split_strategy: str = "cold_protein"
-    train_fraction: float = 0.8
-    validation_fraction: float = 0.1
+    path: str = "/content/embedding_dataset"
     seed: int = 42
-
-
-@dataclass(frozen=True)
-class FeatureConfig:
-    protein_embedding_path: str = ""
-    molecule_embedding_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -38,13 +29,12 @@ class TrainingConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    directory: str = "artifacts/baseline"
+    directory: str = "/content/artifacts/affinity"
 
 
 @dataclass(frozen=True)
 class ProjectConfig:
     data: DataConfig
-    features: FeatureConfig
     model: ModelConfig
     training: TrainingConfig
     output: OutputConfig
@@ -55,9 +45,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         raw = tomllib.load(handle)
     return ProjectConfig(
         data=DataConfig(**raw.get("data", {})),
-        features=FeatureConfig(**raw.get("features", {})),
         model=ModelConfig(**raw.get("model", {})),
         training=TrainingConfig(**raw.get("training", {})),
         output=OutputConfig(**raw.get("output", {})),
     )
-

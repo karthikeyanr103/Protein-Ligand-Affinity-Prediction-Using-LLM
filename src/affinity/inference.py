@@ -23,8 +23,8 @@ class ThreeOnnxAffinityPredictor:
         artifact = Path(artifact_directory)
         metadata = load_metadata(artifact / "metadata.json")
         feature_metadata = metadata.get("features", {})
-        if feature_metadata.get("feature_mode") != "llm_embeddings":
-            raise ValueError("The affinity artifact was not trained with LLM embeddings")
+        if feature_metadata.get("feature_mode") != "onnx_embeddings":
+            raise ValueError("The affinity artifact was not trained with ONNX embeddings")
 
         protein_settings = feature_metadata.get("protein_extraction", {})
         molecule_settings = feature_metadata.get("molecule_extraction", {})
@@ -45,6 +45,11 @@ class ThreeOnnxAffinityPredictor:
             tokenizer_id=feature_metadata["protein_model"],
             max_length=int(protein_settings.get("max_length", 1536)),
         )
+        exported_protein_id = self.protein_embedder.metadata.get("model_id")
+        if exported_protein_id and exported_protein_id != feature_metadata["protein_model"]:
+            raise ValueError(
+                "ProLLaMA ONNX model ID does not match the training embedding cache"
+            )
         self.molecule_embedder = MolLLaMAOnnxEmbedder(mol_llama_directory)
         exported_molecule_id = self.molecule_embedder.metadata.get("model_id")
         if exported_molecule_id and exported_molecule_id != feature_metadata["molecule_model"]:
@@ -80,7 +85,7 @@ def main() -> None:
     )
     parser.add_argument("--protein", required=True)
     parser.add_argument("--smiles", required=True)
-    parser.add_argument("--artifacts", default="artifacts/llm_fusion")
+    parser.add_argument("--artifacts", default="/content/artifacts/affinity")
     parser.add_argument("--prollama-onnx", required=True)
     parser.add_argument("--mol-llama-onnx", required=True)
     args = parser.parse_args()

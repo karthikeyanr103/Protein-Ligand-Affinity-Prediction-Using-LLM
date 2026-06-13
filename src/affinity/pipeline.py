@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from affinity.features import descriptor_matrix, join_optional_embeddings
+from affinity.features import build_embedding_features
 
 
 def build_features(
@@ -14,9 +14,7 @@ def build_features(
     protein_embedding_path: str = "",
     molecule_embedding_path: str = "",
 ) -> tuple[np.ndarray, dict[str, object]]:
-    base = descriptor_matrix(proteins, smiles_values)
-    return join_optional_embeddings(
-        base,
+    return build_embedding_features(
         proteins,
         smiles_values,
         protein_embedding_path,

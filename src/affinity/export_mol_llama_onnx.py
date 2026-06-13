@@ -5,10 +5,10 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-import numpy as np
 
 
 class MolLLaMAEncoderWrapper(nn.Module):
@@ -234,7 +234,25 @@ def export_mol_llama_onnx(
             quantized,
             weight_type=QuantType.QInt8,
         )
+        quantized_session = ort.InferenceSession(
+            str(quantized),
+            providers=["CPUExecutionProvider"],
+        )
+        quantized_output = quantized_session.run(
+            ["molecule_embedding"],
+            feeds,
+        )[0]
+        quantized_error = float(
+            np.max(np.abs(reference - quantized_output))
+        )
+        if not np.allclose(reference, quantized_output, rtol=0.15, atol=0.15):
+            raise ValueError(
+                "Quantized Mol-LLaMA parity check failed; "
+                f"max error={quantized_error}"
+            )
         destination = quantized
+    else:
+        quantized_error = None
     (output / "export_metadata.json").write_text(
         json.dumps(
             {
@@ -245,6 +263,7 @@ def export_mol_llama_onnx(
                 "opset": opset,
                 "fp32_max_absolute_error": max_absolute_error,
                 "wrapper_max_absolute_error": wrapper_max_absolute_error,
+                "int8_max_absolute_error": quantized_error,
             },
             indent=2,
         ),

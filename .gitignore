@@ -6,8 +6,6 @@ checkpoints/
 outputs/
 *.onnx
 *.npz
-!release/model/*.onnx
-!release/model/*.npz
 
 # Python
 __pycache__/
@@ -25,3 +23,4 @@ venv/
 # Secrets
 .env
 .kaggle/
+models/
