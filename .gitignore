@@ -1,0 +1,27 @@
+# Large/private data and generated artifacts
+data/*.csv
+!data/sample_train.csv
+artifacts/
+checkpoints/
+outputs/
+*.onnx
+*.npz
+!release/model/*.onnx
+!release/model/*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Notebooks and editors
+.ipynb_checkpoints/
+.idea/
+.vscode/
+
+# Secrets
+.env
+.kaggle/

@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protein-compound-affinity"
+version = "0.1.0"
+description = "Leakage-aware protein-compound affinity prediction with optional molecular and protein LLM embeddings."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "numpy>=1.26,<3",
+  "pandas>=2.1,<3",
+  "scikit-learn>=1.4,<2",
+  "torch>=2.2,<3",
+]
+
+[project.optional-dependencies]
+chem = ["rdkit>=2024.3"]
+llm = [
+  "accelerate>=0.30",
+  "bitsandbytes>=0.43; platform_system != 'Windows'",
+  "peft>=0.11",
+  "transformers>=4.44,<5",
+]
+onnx = [
+  "onnx>=1.16",
+  "onnxruntime>=1.18",
+  "optimum-onnx>=0.0.3",
+  "rdkit>=2024.3",
+  "transformers>=4.43,<5",
+]
+analysis = ["matplotlib>=3.8", "seaborn>=0.13"]
+space = [
+  "gradio>=5,<7",
+  "huggingface-hub>=0.24",
+  "onnxruntime>=1.18",
+  "plotly>=5.22",
+  "py3Dmol>=2.2",
+  "rdkit>=2024.3",
+  "transformers>=4.43,<5",
+]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+affinity-profile = "affinity.data:main"
+affinity-train = "affinity.train:main"
+affinity-evaluate = "affinity.evaluate:main"
+affinity-export-onnx = "affinity.export_onnx:main"
+affinity-export-mol-onnx = "affinity.export_mol_llama_onnx:main"
+affinity-export-protein-onnx = "affinity.export_prollama_onnx:main"
+affinity-extract-onnx = "affinity.extract_onnx_embeddings:main"
+affinity-mol-embeddings = "affinity.mol_llama_embeddings:main"
+affinity-predict = "affinity.inference:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

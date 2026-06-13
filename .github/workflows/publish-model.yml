@@ -1,0 +1,47 @@
+name: Publish ONNX Model
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "release/model/**"
+      - ".github/workflows/publish-model.yml"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_MODEL_ID: ${{ vars.HF_MODEL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "huggingface-hub>=0.24"
+      - name: Validate release bundle
+        run: |
+          test -f release/model/model.onnx
+          test -f release/model/normalization.npz
+          test -f release/model/metadata.json
+      - name: Upload model files
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          repo_id = os.environ["HF_MODEL_ID"]
+          api.create_repo(repo_id, repo_type="model", exist_ok=True)
+          api.upload_folder(
+              repo_id=repo_id,
+              repo_type="model",
+              folder_path="release/model",
+              commit_message="Publish ONNX affinity model",
+          )
+          PY

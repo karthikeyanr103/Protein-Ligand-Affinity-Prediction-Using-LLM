@@ -1,0 +1,7 @@
+gradio>=5,<7
+huggingface-hub>=0.24
+numpy>=1.26,<3
+onnxruntime>=1.18
+py3Dmol>=2.2
+rdkit>=2024.3
+transformers>=4.43,<5

@@ -1,0 +1,26 @@
+[data]
+path = "/kaggle/input/protein-compound-affinity/train.csv"
+split_strategy = "cold_protein"
+train_fraction = 0.80
+validation_fraction = 0.10
+seed = 42
+
+[features]
+protein_embedding_path = "/kaggle/working/features/prollama_embeddings.npz"
+molecule_embedding_path = "/kaggle/working/features/mol_llama_embeddings.npz"
+
+[model]
+hidden_dims = [1024, 512, 128]
+dropout = 0.25
+
+[training]
+batch_size = 512
+epochs = 40
+learning_rate = 0.0005
+weight_decay = 0.0001
+patience = 6
+num_workers = 2
+
+[output]
+directory = "/kaggle/working/artifacts/llm_fusion"
+
