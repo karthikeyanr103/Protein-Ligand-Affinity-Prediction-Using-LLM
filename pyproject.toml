@@ -13,6 +13,7 @@ dependencies = [
   "numpy>=1.26,<3",
   "pandas>=2.1,<3",
   "torch>=2.2,<3",
+  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,11 @@ export = [
 ]
 runtime = [
   "onnxruntime>=1.18",
+  "rdkit>=2024.3",
+  "transformers>=4.43,<5",
+]
+gpu-runtime = [
+  "onnxruntime-gpu>=1.18",
   "rdkit>=2024.3",
   "transformers>=4.43,<5",
 ]

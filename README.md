@@ -159,6 +159,19 @@ Expected dataset repository:
 your-name/protein-compound-affinity-embeddings
 ```
 
+Notebook 2 automatically checks for an NVIDIA GPU. When one is present it installs
+`onnxruntime-gpu`; otherwise it installs the CPU runtime. Before extraction begins, the command
+prints the physical GPU, available ONNX Runtime providers and the selected device:
+
+```text
+Physical GPU: NVIDIA A100-SXM4-40GB
+ONNX Runtime providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+Selected ONNX device: CUDA GPU
+```
+
+Device selection defaults to `--device auto`. Use `--device cpu` to force CPU or
+`--device cuda` to require CUDA and fail early when the CUDA provider is unavailable.
+
 ### 3️⃣ Train, Validate and Export
 
 Open:

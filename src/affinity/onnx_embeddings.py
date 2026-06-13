@@ -1,11 +1,65 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
+
+
+def detect_onnx_providers(device: str = "auto", verbose: bool = True) -> list[str]:
+    import onnxruntime as ort
+
+    requested = device.lower()
+    if requested not in {"auto", "cpu", "cuda"}:
+        raise ValueError("device must be one of: auto, cpu, cuda")
+    available = ort.get_available_providers()
+    cuda_available = "CUDAExecutionProvider" in available
+    gpu_name = ""
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            gpu_name = result.stdout.strip().splitlines()[0]
+    except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
+        pass
+
+    if requested == "cuda" and not cuda_available:
+        raise RuntimeError(
+            "CUDA was requested, but ONNX Runtime has no CUDAExecutionProvider. "
+            "Install onnxruntime-gpu with a version compatible with the machine's CUDA runtime."
+        )
+    use_cuda = cuda_available and requested != "cpu"
+    providers = (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if use_cuda
+        else ["CPUExecutionProvider"]
+    )
+    if verbose:
+        print(f"Physical GPU: {gpu_name or 'not detected'}", flush=True)
+        print(f"ONNX Runtime providers: {available}", flush=True)
+        print(
+            f"Selected ONNX device: {'CUDA GPU' if use_cuda else 'CPU'}",
+            flush=True,
+        )
+        if gpu_name and not cuda_available:
+            print(
+                "GPU detected, but ONNX Runtime cannot use it. "
+                "Install onnxruntime-gpu to enable CUDAExecutionProvider.",
+                flush=True,
+            )
+    return providers
 
 
 def _safe_index(values: list, value) -> int:
@@ -85,6 +139,7 @@ class ProLLaMAOnnxEmbedder:
         model_directory: str | Path,
         tokenizer_id: str = "GreatCaptainNemo/ProLLaMA",
         max_length: int = 1536,
+        providers: list[str] | None = None,
     ) -> None:
         import onnxruntime as ort
         from transformers import AutoTokenizer
@@ -105,12 +160,13 @@ class ProLLaMAOnnxEmbedder:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.session = None
         self.hidden_output = ""
+        selected_providers = providers or detect_onnx_providers(verbose=False)
         model_paths = sorted(directory.rglob("*.onnx"))
         model_paths.sort(key=lambda path: "int8" not in path.name.lower())
         for model_path in model_paths:
             session = ort.InferenceSession(
                 str(model_path),
-                providers=["CPUExecutionProvider"],
+                providers=selected_providers,
             )
             output_names = {output.name for output in session.get_outputs()}
             hidden_output = next(
@@ -259,7 +315,11 @@ class MolLLaMAOnnxPreprocessor:
 
 
 class MolLLaMAOnnxEmbedder:
-    def __init__(self, model_directory: str | Path) -> None:
+    def __init__(
+        self,
+        model_directory: str | Path,
+        providers: list[str] | None = None,
+    ) -> None:
         import onnxruntime as ort
 
         directory = Path(model_directory)
@@ -280,7 +340,7 @@ class MolLLaMAOnnxEmbedder:
         )
         self.session = ort.InferenceSession(
             str(_find_onnx_model(directory, preferred)),
-            providers=["CPUExecutionProvider"],
+            providers=providers or detect_onnx_providers(verbose=False),
         )
 
     def encode(self, smiles_values: list[str]) -> np.ndarray:
