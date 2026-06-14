@@ -255,16 +255,36 @@ The application provides affinity inference, protein composition summaries, mole
 
 ## Hugging Face Space
 
-Configure these variables:
+The repository includes a deployment script that packages `src/affinity` into the Docker build
+context, creates the Space, configures variables and uploads the application.
+
+```bash
+export HF_TOKEN=hf_your_write_token
+
+python scripts/deploy_hf_space.py \
+  --space your-name/protein-compound-affinity \
+  --protein-repo your-name/esm2-affinity-onnx \
+  --molecule-repo your-name/molformer-affinity-onnx \
+  --affinity-repo your-name/protein-compound-affinity-esm2-molformer-onnx
+```
+
+The script sets:
 
 ```text
-PROTEIN_ONNX_REPO=your-name/esm2-affinity-onnx
-MOLECULE_ONNX_REPO=your-name/molformer-affinity-onnx
-AFFINITY_MODEL_REPO=your-name/protein-compound-affinity-esm2-molformer-onnx
+PROTEIN_ONNX_REPO
+MOLECULE_ONNX_REPO
+AFFINITY_MODEL_REPO
 ONNX_DEVICE=cpu
 ```
 
-Set `HF_TOKEN` as a Space secret for private repositories.
+The same command works from Colab after installing the project. Use `--private` when the Space
+itself should be private. For private model repositories, set a separate read-only token:
+
+```bash
+export HF_MODEL_TOKEN=hf_read_only_token
+```
+
+The deployment write token is not copied into the Space.
 
 The affinity model verifies that its recorded encoder IDs match the downloaded ONNX exports. A
 head trained with ESM-2/MoLFormer will refuse to run with ProLLaMA/Mol-LLaMA, and vice versa.

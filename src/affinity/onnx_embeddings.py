@@ -165,7 +165,12 @@ class TokenizedOnnxEmbedder:
         tokenizer_source = (
             directory if (directory / "tokenizer_config.json").exists() else tokenizer_id
         )
-        self.tokenizer = _load_tokenizer(tokenizer_source)
+        if self.encoder_type == "esm2":
+            from transformers import EsmTokenizer
+
+            self.tokenizer = EsmTokenizer.from_pretrained(tokenizer_source)
+        else:
+            self.tokenizer = _load_tokenizer(tokenizer_source)
         preferred = {
             "esm2": "esm2_encoder_int8.onnx",
             "molformer": "molformer_encoder_int8.onnx",
