@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import os
+import urllib.error
+import urllib.request
 from functools import lru_cache
 from pathlib import Path
 
@@ -42,6 +44,41 @@ ATOM_COLORS = {
     "BR": "#92400e",
     "I": "#7e22ce",
 }
+PAIR_EXAMPLES = [
+    {
+        "name": "Ubiquitin + caffeine",
+        "protein": (
+            "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTL"
+            "SDYNIQKESTLHLVLRLRGG"
+        ),
+        "smiles": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+    },
+    {
+        "name": "Lysozyme + ibuprofen",
+        "protein": (
+            "KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGIL"
+            "QINSRWWCNDGRTPGSRNLCNIPCSALLSSDITASVNCAKKIVSDGNGMNAWVAWR"
+            "NRCKGTDVQAWIRGCRL"
+        ),
+        "smiles": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
+    },
+    {
+        "name": "Insulin B chain + aspirin",
+        "protein": "FVNQHLCGSHLVEALYLVCGERGFFYTPKT",
+        "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O",
+    },
+    {
+        "name": "Villin headpiece + acetaminophen",
+        "protein": "LSDEDFKAVFGMTRSAFANLPLWKQQNLKKEKGLF",
+        "smiles": "CC(=O)NC1=CC=C(C=C1)O",
+    },
+]
+PDB_EXAMPLES = [
+    ("1UBQ", "Ubiquitin"),
+    ("1LYZ", "Lysozyme"),
+    ("1CRN", "Crambin"),
+    ("1L2Y", "Trp-cage"),
+]
 
 
 def validate_protein(sequence: str) -> str:
@@ -129,6 +166,11 @@ def predict(sequence: str, smiles: str):
         protein_render(sequence),
         protein_summary(sequence),
     )
+
+
+def pair_example(index: int) -> tuple[str, str]:
+    example = PAIR_EXAMPLES[index]
+    return example["protein"], example["smiles"]
 
 
 def prediction_card(prediction: float) -> str:
@@ -275,11 +317,9 @@ def molecule_3d(smiles: str) -> Image.Image:
     return image
 
 
-def protein_3d(pdb_file) -> Image.Image:
-    if pdb_file is None:
-        raise gr.Error("Upload a PDB file. A sequence alone has no 3D coordinates.")
+def protein_backbone_image(pdb_text: str) -> Image.Image:
     coordinates = []
-    for line in Path(pdb_file).read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in pdb_text.splitlines():
         if line.startswith(("ATOM  ", "HETATM")) and line[12:16].strip() == "CA":
             try:
                 coordinates.append(
@@ -313,6 +353,30 @@ def protein_3d(pdb_file) -> Image.Image:
             width=5,
         )
     return image
+
+
+def protein_3d(pdb_file) -> Image.Image:
+    if pdb_file is None:
+        raise gr.Error("Upload a PDB file. A sequence alone has no 3D coordinates.")
+    pdb_text = Path(pdb_file).read_text(encoding="utf-8", errors="replace")
+    return protein_backbone_image(pdb_text)
+
+
+@lru_cache(maxsize=len(PDB_EXAMPLES))
+def load_sample_pdb(pdb_id: str) -> Image.Image:
+    valid_ids = {identifier for identifier, _ in PDB_EXAMPLES}
+    if pdb_id not in valid_ids:
+        raise gr.Error("Unknown sample PDB identifier.")
+    request = urllib.request.Request(
+        f"https://files.rcsb.org/download/{pdb_id}.pdb",
+        headers={"User-Agent": "protein-compound-affinity-space/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            pdb_text = response.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise gr.Error(f"Could not download {pdb_id} from RCSB PDB: {error}") from error
+    return protein_backbone_image(pdb_text)
 
 
 EXAMPLE_PROTEIN = "MAVMKNYLLPILVLFLAYYYYSTNEEFRPEMLQGKKVIVTGASKGIGREMAYHLSKMGAHVVLTARSEEGLQK"
@@ -367,6 +431,11 @@ with gr.Blocks(title="Protein-Compound Affinity Explorer", css=CSS) as demo:
             value=EXAMPLE_SMILES,
         )
         run = gr.Button("Predict affinity and render inputs", variant="primary", size="lg")
+        gr.Markdown("#### One-click examples")
+        with gr.Row():
+            example_buttons = [
+                gr.Button(example["name"], size="sm") for example in PAIR_EXAMPLES
+            ]
 
     with gr.Column(visible=False) as results:
         score = gr.HTML()
@@ -386,14 +455,35 @@ with gr.Blocks(title="Protein-Compound Affinity Explorer", css=CSS) as demo:
         [score, image, view_3d, molecule_data, protein_view, protein_data],
     ).then(lambda: gr.update(visible=True), outputs=results)
 
+    for index, button in enumerate(example_buttons):
+        button.click(
+            lambda selected=index: pair_example(selected),
+            outputs=[protein, smiles],
+        ).then(
+            predict,
+            [protein, smiles],
+            [score, image, view_3d, molecule_data, protein_view, protein_data],
+        ).then(lambda: gr.update(visible=True), outputs=results)
+
     with gr.Accordion("Optional protein 3D viewer", open=False):
         gr.Markdown(
             "A protein sequence does not contain 3D coordinates. Upload a PDB file "
-            "to inspect an experimentally determined or predicted structure."
+            "or select one of the four RCSB PDB examples."
         )
         pdb = gr.File(label="PDB file", file_types=[".pdb"], type="filepath")
         pdb_view = gr.Image(label="Protein backbone projection", height=520)
         gr.Button("Render PDB structure").click(protein_3d, pdb, pdb_view)
+        gr.Markdown("#### Sample PDB structures")
+        with gr.Row():
+            pdb_buttons = [
+                gr.Button(f"{pdb_id} · {name}", size="sm")
+                for pdb_id, name in PDB_EXAMPLES
+            ]
+        for (pdb_id, _), button in zip(PDB_EXAMPLES, pdb_buttons):
+            button.click(
+                lambda selected=pdb_id: load_sample_pdb(selected),
+                outputs=pdb_view,
+            )
     gr.Markdown(
         html.escape(
             "Research demonstration only. Predictions are not medical or drug-development advice."
