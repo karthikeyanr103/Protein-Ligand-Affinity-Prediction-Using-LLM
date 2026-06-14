@@ -14,6 +14,21 @@ from rdkit.Chem import AllChem, Descriptors, Draw, Lipinski
 from affinity.inference import ThreeOnnxAffinityPredictor
 
 AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
+RESIDUE_COLORS = {
+    "D": "#ef4444",
+    "E": "#ef4444",
+    "K": "#3b82f6",
+    "R": "#3b82f6",
+    "H": "#3b82f6",
+    "A": "#22c55e",
+    "V": "#22c55e",
+    "I": "#22c55e",
+    "L": "#22c55e",
+    "M": "#22c55e",
+    "F": "#22c55e",
+    "W": "#22c55e",
+    "Y": "#22c55e",
+}
 
 
 def validate_protein(sequence: str) -> str:
@@ -88,7 +103,31 @@ def predict(sequence: str, smiles: str):
         prediction = float(get_predictor().predict([sequence], [smiles])[0])
     except Exception as error:
         raise gr.Error(f"Inference failed: {error}") from error
-    return prediction, molecule_summary(smiles), protein_summary(sequence)
+    try:
+        conformer = molecule_3d(smiles)
+    except Exception:
+        conformer = (
+            "<div class='render-note'>A 3D conformer could not be generated for "
+            "this compound. The affinity prediction is still valid.</div>"
+        )
+    return (
+        prediction_card(prediction),
+        molecule_2d(smiles),
+        conformer,
+        molecule_summary(smiles),
+        protein_render(sequence),
+        protein_summary(sequence),
+    )
+
+
+def prediction_card(prediction: float) -> str:
+    return (
+        "<div class='score-card'>"
+        "<div class='score-label'>Predicted affinity score</div>"
+        f"<div class='score-value'>{prediction:.4f}</div>"
+        "<div class='score-note'>Model output on the dataset target scale</div>"
+        "</div>"
+    )
 
 
 def molecule_summary(smiles: str) -> dict:
@@ -113,6 +152,27 @@ def protein_summary(sequence: str) -> dict:
             sum(sequence.count(aa) for aa in "AVILMFWY") / len(sequence), 4
         ),
     }
+
+
+def protein_render(sequence: str) -> str:
+    sequence = validate_protein(sequence)
+    residues = "".join(
+        "<span class='residue' "
+        f"style='background:{RESIDUE_COLORS.get(residue, '#64748b')}' "
+        f"title='Position {index}: {residue}'>{html.escape(residue)}</span>"
+        for index, residue in enumerate(sequence, start=1)
+    )
+    return (
+        "<div class='protein-card'>"
+        f"<div class='sequence-header'>{len(sequence):,} amino acids</div>"
+        f"<div class='sequence-map'>{residues}</div>"
+        "<div class='sequence-legend'>"
+        "<span><i style='background:#ef4444'></i>Acidic</span>"
+        "<span><i style='background:#3b82f6'></i>Basic</span>"
+        "<span><i style='background:#22c55e'></i>Hydrophobic</span>"
+        "<span><i style='background:#64748b'></i>Other</span>"
+        "</div></div>"
+    )
 
 
 def molecule_2d(smiles: str):
@@ -147,35 +207,82 @@ def protein_3d(pdb_file) -> str:
 EXAMPLE_PROTEIN = "MAVMKNYLLPILVLFLAYYYYSTNEEFRPEMLQGKKVIVTGASKGIGREMAYHLSKMGAHVVLTARSEEGLQK"
 EXAMPLE_SMILES = "C1CC1(C2=CC=C(C=C2)F)C(=O)N3CC4CC4(C3)C5=CNC6=C5C=CC=N6"
 
-with gr.Blocks(title="Protein-Compound Affinity Explorer") as demo:
+CSS = """
+.gradio-container {max-width: 1220px !important; margin: auto !important;}
+.hero {text-align:center; padding:1.2rem 0 .4rem;}
+.hero h1 {margin-bottom:.35rem;}
+.hero p {color:#64748b; margin:0 auto; max-width:760px;}
+.input-card, .result-card {
+    border:1px solid #e2e8f0; border-radius:16px; padding:18px;
+    background:var(--block-background-fill);
+}
+.score-card {
+    color:white; text-align:center; border-radius:16px; padding:24px;
+    background:linear-gradient(135deg,#4338ca,#2563eb);
+    box-shadow:0 12px 28px rgba(37,99,235,.2);
+}
+.score-label {font-size:15px; opacity:.9;}
+.score-value {font-size:48px; line-height:1.15; font-weight:750; margin:6px 0;}
+.score-note {font-size:12px; opacity:.75;}
+.protein-card {border:1px solid #e2e8f0; border-radius:12px; padding:14px;}
+.sequence-header {font-weight:650; margin-bottom:10px;}
+.sequence-map {display:flex; flex-wrap:wrap; gap:3px; max-height:280px; overflow:auto;}
+.residue {
+    color:white; width:24px; height:24px; line-height:24px; text-align:center;
+    border-radius:4px; font:600 12px ui-monospace,monospace;
+}
+.sequence-legend {display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; font-size:12px;}
+.sequence-legend span {display:flex; align-items:center; gap:5px;}
+.sequence-legend i {display:inline-block; width:10px; height:10px; border-radius:3px;}
+.render-note {padding:24px; text-align:center; color:#64748b;}
+"""
+
+with gr.Blocks(title="Protein-Compound Affinity Explorer", css=CSS) as demo:
     gr.Markdown(
-        "# Protein-Compound Affinity Explorer\n"
-        "Each prediction runs protein encoder ONNX, molecule encoder ONNX, and the "
-        "affinity ONNX head. "
-        "The first request downloads and initializes all three CPU models."
+        "<div class='hero'><h1>Protein-Compound Affinity Explorer</h1>"
+        "<p>Paste a protein sequence and compound SMILES to predict their affinity "
+        "and inspect both inputs. Inference runs entirely through ONNX.</p></div>"
     )
-    with gr.Tab("Predict"):
-        protein = gr.Textbox(label="Protein sequence", lines=6, value=EXAMPLE_PROTEIN)
-        smiles = gr.Textbox(label="Compound SMILES", value=EXAMPLE_SMILES)
-        run = gr.Button("Run ONNX inference", variant="primary")
-        score = gr.Number(label="Predicted affinity label")
-        molecule_data = gr.JSON(label="Molecule descriptors")
-        protein_data = gr.JSON(label="Protein descriptors")
-        run.click(predict, [protein, smiles], [score, molecule_data, protein_data])
-    with gr.Tab("Molecule 2D/3D"):
-        molecule_input = gr.Textbox(label="SMILES", value=EXAMPLE_SMILES)
-        with gr.Row():
-            image = gr.Image(label="2D structure")
-            view_3d = gr.HTML(label="3D conformer")
-        gr.Button("Render molecule").click(
-            lambda value: (molecule_2d(value), molecule_3d(value)),
-            molecule_input,
-            [image, view_3d],
+    with gr.Group(elem_classes="input-card"):
+        protein = gr.Textbox(
+            label="Protein sequence",
+            placeholder="Paste the amino-acid sequence here...",
+            lines=7,
+            value=EXAMPLE_PROTEIN,
         )
-    with gr.Tab("Protein 3D"):
-        pdb = gr.File(label="PDB file", file_types=[".pdb"], type="filepath")
+        smiles = gr.Textbox(
+            label="Compound SMILES",
+            placeholder="Paste the compound SMILES here...",
+            value=EXAMPLE_SMILES,
+        )
+        run = gr.Button("Predict affinity and render inputs", variant="primary", size="lg")
+
+    with gr.Column(visible=False) as results:
+        score = gr.HTML()
+        gr.Markdown("## Compound")
+        with gr.Row():
+            image = gr.Image(label="2D structure", height=420)
+            view_3d = gr.HTML(label="Generated 3D conformer")
+        molecule_data = gr.JSON(label="Molecule descriptors")
+
+        gr.Markdown("## Protein")
         protein_view = gr.HTML()
-        gr.Button("Render protein").click(protein_3d, pdb, protein_view)
+        protein_data = gr.JSON(label="Protein descriptors")
+
+    run.click(
+        predict,
+        [protein, smiles],
+        [score, image, view_3d, molecule_data, protein_view, protein_data],
+    ).then(lambda: gr.update(visible=True), outputs=results)
+
+    with gr.Accordion("Optional protein 3D viewer", open=False):
+        gr.Markdown(
+            "A protein sequence does not contain 3D coordinates. Upload a PDB file "
+            "to inspect an experimentally determined or predicted structure."
+        )
+        pdb = gr.File(label="PDB file", file_types=[".pdb"], type="filepath")
+        pdb_view = gr.HTML()
+        gr.Button("Render PDB structure").click(protein_3d, pdb, pdb_view)
     gr.Markdown(
         html.escape(
             "Research demonstration only. Predictions are not medical or drug-development advice."
