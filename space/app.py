@@ -6,8 +6,9 @@ from functools import lru_cache
 from pathlib import Path
 
 import gradio as gr
-import py3Dmol
+import numpy as np
 from huggingface_hub import snapshot_download
+from PIL import Image, ImageDraw
 from rdkit import Chem
 from rdkit.Chem import AllChem, Descriptors, Draw, Lipinski
 
@@ -28,6 +29,18 @@ RESIDUE_COLORS = {
     "F": "#22c55e",
     "W": "#22c55e",
     "Y": "#22c55e",
+}
+ATOM_COLORS = {
+    "C": "#334155",
+    "H": "#cbd5e1",
+    "N": "#2563eb",
+    "O": "#dc2626",
+    "F": "#16a34a",
+    "P": "#ea580c",
+    "S": "#ca8a04",
+    "CL": "#16a34a",
+    "BR": "#92400e",
+    "I": "#7e22ce",
 }
 
 
@@ -105,11 +118,9 @@ def predict(sequence: str, smiles: str):
         raise gr.Error(f"Inference failed: {error}") from error
     try:
         conformer = molecule_3d(smiles)
-    except Exception:
-        conformer = (
-            "<div class='render-note'>A 3D conformer could not be generated for "
-            "this compound. The affinity prediction is still valid.</div>"
-        )
+    except Exception as error:
+        gr.Warning(f"Could not generate the 3D conformer: {error}")
+        conformer = None
     return (
         prediction_card(prediction),
         molecule_2d(smiles),
@@ -179,29 +190,129 @@ def molecule_2d(smiles: str):
     return Draw.MolToImage(Chem.MolFromSmiles(validate_smiles(smiles)), size=(700, 450))
 
 
-def molecule_3d(smiles: str) -> str:
+def _project_coordinates(
+    coordinates: np.ndarray,
+    width: int,
+    height: int,
+    padding: int = 50,
+) -> tuple[np.ndarray, np.ndarray]:
+    angle_y = np.deg2rad(-28)
+    angle_x = np.deg2rad(18)
+    rotate_y = np.array(
+        [
+            [np.cos(angle_y), 0, np.sin(angle_y)],
+            [0, 1, 0],
+            [-np.sin(angle_y), 0, np.cos(angle_y)],
+        ],
+        dtype=np.float32,
+    )
+    rotate_x = np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(angle_x), -np.sin(angle_x)],
+            [0, np.sin(angle_x), np.cos(angle_x)],
+        ],
+        dtype=np.float32,
+    )
+    rotated = (coordinates - coordinates.mean(axis=0)) @ rotate_y.T @ rotate_x.T
+    xy = rotated[:, :2]
+    span = np.maximum(np.ptp(xy, axis=0), 1e-6)
+    scale = min((width - 2 * padding) / span[0], (height - 2 * padding) / span[1])
+    projected = xy * scale
+    projected[:, 0] += width / 2
+    projected[:, 1] = height / 2 - projected[:, 1]
+    return projected, rotated[:, 2]
+
+
+def molecule_3d(smiles: str) -> Image.Image:
     molecule = Chem.AddHs(Chem.MolFromSmiles(validate_smiles(smiles)))
     parameters = AllChem.ETKDGv3()
     parameters.randomSeed = 42
     if AllChem.EmbedMolecule(molecule, parameters) != 0:
         raise gr.Error("RDKit could not generate a conformer for this molecule.")
-    AllChem.MMFFOptimizeMolecule(molecule, maxIters=500)
-    viewer = py3Dmol.view(width=800, height=500)
-    viewer.addModel(Chem.MolToMolBlock(molecule), "mol")
-    viewer.setStyle({"stick": {}, "sphere": {"scale": 0.25}})
-    viewer.zoomTo()
-    return viewer._make_html()
+    if AllChem.MMFFHasAllMoleculeParams(molecule):
+        AllChem.MMFFOptimizeMolecule(molecule, maxIters=500)
+    else:
+        AllChem.UFFOptimizeMolecule(molecule, maxIters=500)
+
+    conformer = molecule.GetConformer()
+    coordinates = np.array(
+        [
+            [
+                conformer.GetAtomPosition(index).x,
+                conformer.GetAtomPosition(index).y,
+                conformer.GetAtomPosition(index).z,
+            ]
+            for index in range(molecule.GetNumAtoms())
+        ],
+        dtype=np.float32,
+    )
+    width, height = 760, 460
+    points, depth = _project_coordinates(coordinates, width, height)
+    image = Image.new("RGB", (width, height), "#f8fafc")
+    drawing = ImageDraw.Draw(image)
+
+    for bond in molecule.GetBonds():
+        start = tuple(map(float, points[bond.GetBeginAtomIdx()]))
+        end = tuple(map(float, points[bond.GetEndAtomIdx()]))
+        drawing.line([start, end], fill="#64748b", width=4)
+
+    depth_range = max(float(np.ptp(depth)), 1e-6)
+    for index in np.argsort(depth):
+        atom = molecule.GetAtomWithIdx(int(index))
+        x, y = points[index]
+        relative_depth = (float(depth[index]) - float(depth.min())) / depth_range
+        radius = int(7 + 5 * relative_depth)
+        color = ATOM_COLORS.get(atom.GetSymbol().upper(), "#64748b")
+        drawing.ellipse(
+            (x - radius, y - radius, x + radius, y + radius),
+            fill=color,
+            outline="#ffffff",
+            width=2,
+        )
+        if atom.GetSymbol() != "H":
+            drawing.text((x + radius + 2, y - radius), atom.GetSymbol(), fill="#0f172a")
+    return image
 
 
-def protein_3d(pdb_file) -> str:
+def protein_3d(pdb_file) -> Image.Image:
     if pdb_file is None:
         raise gr.Error("Upload a PDB file. A sequence alone has no 3D coordinates.")
-    pdb_text = Path(pdb_file).read_text(encoding="utf-8", errors="replace")
-    viewer = py3Dmol.view(width=800, height=600)
-    viewer.addModel(pdb_text, "pdb")
-    viewer.setStyle({"cartoon": {"color": "spectrum"}})
-    viewer.zoomTo()
-    return viewer._make_html()
+    coordinates = []
+    for line in Path(pdb_file).read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(("ATOM  ", "HETATM")) and line[12:16].strip() == "CA":
+            try:
+                coordinates.append(
+                    [float(line[30:38]), float(line[38:46]), float(line[46:54])]
+                )
+            except ValueError:
+                continue
+    if len(coordinates) < 2:
+        raise gr.Error("The PDB file does not contain enough alpha-carbon coordinates.")
+
+    width, height = 900, 600
+    points, _ = _project_coordinates(
+        np.asarray(coordinates, dtype=np.float32), width, height, padding=60
+    )
+    image = Image.new("RGB", (width, height), "#f8fafc")
+    drawing = ImageDraw.Draw(image)
+    denominator = max(len(points) - 1, 1)
+    for index in range(len(points) - 1):
+        fraction = index / denominator
+        color = (
+            int(37 + 202 * fraction),
+            int(99 + 20 * (1 - fraction)),
+            int(235 - 160 * fraction),
+        )
+        drawing.line(
+            [
+                tuple(map(float, points[index])),
+                tuple(map(float, points[index + 1])),
+            ],
+            fill=color,
+            width=5,
+        )
+    return image
 
 
 EXAMPLE_PROTEIN = "MAVMKNYLLPILVLFLAYYYYSTNEEFRPEMLQGKKVIVTGASKGIGREMAYHLSKMGAHVVLTARSEEGLQK"
@@ -262,7 +373,7 @@ with gr.Blocks(title="Protein-Compound Affinity Explorer", css=CSS) as demo:
         gr.Markdown("## Compound")
         with gr.Row():
             image = gr.Image(label="2D structure", height=420)
-            view_3d = gr.HTML(label="Generated 3D conformer")
+            view_3d = gr.Image(label="Generated 3D conformer projection", height=420)
         molecule_data = gr.JSON(label="Molecule descriptors")
 
         gr.Markdown("## Protein")
@@ -281,7 +392,7 @@ with gr.Blocks(title="Protein-Compound Affinity Explorer", css=CSS) as demo:
             "to inspect an experimentally determined or predicted structure."
         )
         pdb = gr.File(label="PDB file", file_types=[".pdb"], type="filepath")
-        pdb_view = gr.HTML()
+        pdb_view = gr.Image(label="Protein backbone projection", height=520)
         gr.Button("Render PDB structure").click(protein_3d, pdb, pdb_view)
     gr.Markdown(
         html.escape(
