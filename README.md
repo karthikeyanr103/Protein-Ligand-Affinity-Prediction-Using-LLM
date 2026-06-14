@@ -118,7 +118,6 @@ combinations are rejected during inference.
 ├── data/
 │   └── sample_train.csv               # Small schema/example dataset
 ├── docs/
-│   ├── LINKEDIN_POST.md               # Ready-to-use launch post
 │   └── assets/pipeline.svg            # Animated README diagram
 ├── notebooks/
 │   ├── 01_export_llms_to_onnx.ipynb

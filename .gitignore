@@ -6,7 +6,7 @@ checkpoints/
 outputs/
 *.onnx
 *.npz
-!docs/LINKEDIN_POST.md
+
 # Python
 __pycache__/
 *.py[cod]
