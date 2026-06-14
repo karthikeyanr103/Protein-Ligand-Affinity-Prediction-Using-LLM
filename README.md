@@ -2,329 +2,451 @@
 
 # 🧬 Protein-Compound Affinity Prediction
 
-### ESM-2 ONNX + MoLFormer ONNX + Affinity ONNX
+### Structure-free affinity prediction with protein and molecular language models
 
-![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CED?logo=onnx&logoColor=white)
-![Hugging Face](https://img.shields.io/badge/Deployment-Hugging_Face-FFD21E)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![ONNX](https://img.shields.io/badge/Inference-ONNX_Runtime-005CED?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Hugging Face](https://img.shields.io/badge/Live_Demo-Hugging_Face_Spaces-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/IAmKarthik/protein-compound-affinity)
+[![License](https://img.shields.io/badge/License-Apache_2.0-2ea44f)](https://www.apache.org/licenses/LICENSE-2.0)
 
-Protein-compound affinity prediction using frozen scientific encoders and a small trainable
-regression head.
+**Protein sequence + compound SMILES → frozen encoder embeddings → affinity prediction**
+
+[🚀 Live Demo](https://huggingface.co/spaces/IAmKarthik/protein-compound-affinity)
+·
+[📊 Kaggle Dataset](https://www.kaggle.com/competitions/protein-compound-affinity/data)
+·
+[🤗 Hugging Face Profile](https://huggingface.co/IAmKarthik)
+·
+[📓 Notebooks](notebooks)
+
+<br>
+
+<img src="docs/assets/pipeline.svg" alt="Animated protein-compound affinity pipeline" width="900">
 
 </div>
 
-## Project
+## ✨ Overview
 
-The model receives:
+This project predicts a continuous protein-compound affinity value without requiring a protein
+structure or a docked ligand pose. It combines representations from two pretrained scientific
+language models:
 
-- a protein amino-acid sequence;
-- a molecule represented as a SMILES string.
+- **Protein encoder:** [ESM-2 35M](https://huggingface.co/facebook/esm2_t12_35M_UR50D)
+- **Molecule encoder:** [MoLFormer XL 10%](https://huggingface.co/ibm-research/MoLFormer-XL-both-10pct)
+- **Prediction head:** a trained multilayer perceptron exported to ONNX
 
-Each input is encoded independently. The two embeddings are concatenated, standardized with
-training-set statistics, and passed through an MLP that predicts the affinity label.
+All three models run through ONNX Runtime. The deployed Hugging Face Space does not require
+PyTorch, a paid inference endpoint, AWS, or a GPU.
+
+### What the application provides
+
+- ⚡ CPU-based ONNX inference
+- 🧬 protein sequence validation and composition analysis
+- 🧪 SMILES validation and molecular descriptors
+- 🖼️ server-rendered 2D molecule structures
+- 🔬 generated molecule conformer projections
+- 🧱 optional PDB backbone visualization
+- 🧫 four one-click protein-compound examples
+- 📦 reproducible Colab/Kaggle notebook workflow
+
+> [!NOTE]
+> The affinity value uses the target scale of the Kaggle training data. It must not be interpreted
+> as a universal binding constant unless the dataset definition explicitly establishes that unit.
+
+## 🚀 Try It
+
+Open the live application:
+
+### [Protein-Compound Affinity Explorer](https://huggingface.co/spaces/IAmKarthik/protein-compound-affinity)
+
+1. Paste a protein amino-acid sequence.
+2. Paste a compound SMILES string.
+3. Select **Predict affinity and render inputs**.
+4. Review the predicted score, molecule views, and protein/molecule descriptors.
+
+The first request can take longer because the Space downloads and initializes three ONNX models.
+Later requests reuse the cached sessions.
+
+## 🏗️ Architecture
 
 ```mermaid
 flowchart LR
-    P["Protein sequence"] --> E["ESM-2 ONNX"]
-    M["SMILES"] --> F["MoLFormer ONNX"]
+    P["🧬 Protein sequence"] --> PT["ESM tokenizer"]
+    PT --> E["ESM-2 ONNX"]
+    M["🧪 Compound SMILES"] --> MT["MoLFormer tokenizer"]
+    MT --> F["MoLFormer ONNX"]
     E --> PE["Protein embedding"]
     F --> ME["Molecule embedding"]
-    PE --> C["Concatenate and standardize"]
+    PE --> C["Concatenate"]
     ME --> C
-    C --> H["Affinity MLP ONNX"]
-    H --> Y["Predicted affinity"]
+    C --> N["Training-set normalization"]
+    N --> H["Affinity MLP ONNX"]
+    H --> Y["📈 Predicted affinity"]
 ```
 
-Deployment runs three ONNX graphs. PyTorch is not needed in the local application or Hugging Face
-Space.
+### Default encoder profile
 
-## Encoder Profiles
-
-The notebooks expose one setting:
-
-```python
-ENCODER_PROFILE = "lightweight"  # lightweight or legacy
-```
-
-The lightweight profile is the default because it can be exported, downloaded and served within
-normal notebook and CPU Space limits.
-
-| Profile | Protein encoder | Molecule encoder | Intended use |
+| Component | Model | Backbone | Representation |
 |---|---|---|---|
-| `lightweight` | `facebook/esm2_t12_35M_UR50D` | `ibm-research/MoLFormer-XL-both-10pct` | Default training and deployment |
-| `legacy` | `GreatCaptainNemo/ProLLaMA` | `DongkiKim/Mol-Llama-3.1-8B-Instruct` | Optional large-model experiment |
+| Protein | [`facebook/esm2_t12_35M_UR50D`](https://huggingface.co/facebook/esm2_t12_35M_UR50D) | 12-layer bidirectional Transformer, approximately 35M parameters | Mean final hidden state over valid residue tokens |
+| Molecule | [`ibm-research/MoLFormer-XL-both-10pct`](https://huggingface.co/ibm-research/MoLFormer-XL-both-10pct) | Linear-attention Transformer with rotary embeddings, approximately 46.8M parameters | Official pooled SMILES representation |
+| Affinity | Project MLP | `1024 → 512 → 128 → 1`, dropout `0.25` | Continuous affinity prediction |
 
-Embedding datasets and affinity heads from different profiles are not interchangeable. The exact
-model IDs, pooling settings and maximum lengths are stored in `dataset_metadata.json` and the
-trained model's `metadata.json`.
+ESM-2 uses masked amino-acid language modeling. MoLFormer uses masked language modeling over
+canonicalized SMILES and was pretrained on 10% of ZINC15 plus 10% of PubChem.
 
-## Default Models
+## 🤗 Published Artifacts
 
-### Protein: ESM-2 35M
+| Artifact | Hugging Face repository |
+|---|---|
+| Interactive application | [`IAmKarthik/protein-compound-affinity`](https://huggingface.co/spaces/IAmKarthik/protein-compound-affinity) |
+| ESM-2 ONNX encoder | [`IAmKarthik/esm2-affinity-onnx`](https://huggingface.co/IAmKarthik/esm2-affinity-onnx) |
+| MoLFormer ONNX encoder | [`IAmKarthik/molformer-affinity-onnx`](https://huggingface.co/IAmKarthik/molformer-affinity-onnx) |
+| Affinity head ONNX | [`IAmKarthik/protein-compound-affinity-esm2-molformer-onnx`](https://huggingface.co/IAmKarthik/protein-compound-affinity-esm2-molformer-onnx) |
 
-[facebook/esm2_t12_35M_UR50D](https://huggingface.co/facebook/esm2_t12_35M_UR50D)
-is a 12-layer ESM-2 transformer with roughly 35 million parameters.
+The affinity model records the expected encoder IDs, pooling rules, maximum lengths, feature
+dimensions, normalization values, and dataset split settings. Incompatible encoder/head
+combinations are rejected during inference.
 
-- Backbone: bidirectional protein Transformer.
-- Objective: masked amino-acid language modeling.
-- Training sources described by the model card: UniRef90 and UniRef50 protein clusters.
-- Maximum content length: 1,022 residues, plus tokenizer special tokens.
-- Exported representation: mean of the final hidden states over amino-acid tokens; padding and
-  special tokens are excluded.
-- ONNX output: one fixed-size protein embedding.
-
-The originally considered
-[`nvidia/esm2_t12_35M_UR50D`](https://huggingface.co/nvidia/esm2_t12_35M_UR50D)
-checkpoint uses Transformer Engine custom CUDA layers. It requires a matching CUDA ABI and is not
-a portable source for standard ONNX export. The default therefore uses the standard Hugging Face
-ESM-2 checkpoint with the same 12-layer/35M model scale.
-
-Paper:
-[Evolutionary-scale prediction of atomic-level protein structure with a language model](https://www.science.org/doi/10.1126/science.ade2574).
-
-### Molecule: MoLFormer XL 10%
-
-[ibm-research/MoLFormer-XL-both-10pct](https://huggingface.co/ibm-research/MoLFormer-XL-both-10pct)
-has roughly 46.8 million parameters.
-
-- Backbone: linear-attention Transformer with rotary positional embeddings.
-- Objective: masked language modeling over canonicalized SMILES.
-- Pretraining data: 10% of ZINC15 and 10% of PubChem.
-- Training filter: molecules longer than 202 tokens were excluded.
-- Exported representation: the model's official `pooler_output`.
-- ONNX output: one fixed-size molecule embedding.
-
-Paper:
-[Large-scale chemical language representations capture molecular structure and properties](https://www.nature.com/articles/s42256-022-00580-7).
-
-## Optional Legacy Models
-
-The original workflow remains available.
-
-### ProLLaMA
-
-- Model: [GreatCaptainNemo/ProLLaMA](https://huggingface.co/GreatCaptainNemo/ProLLaMA)
-- Backbone: Llama-family 7B decoder adapted to protein sequences.
-- Representation: attention-mask mean of the final decoder hidden state.
-- Prompt: `[Determine superfamily] Seq=<{sequence}>`.
-- Paper: [ProLLaMA](https://arxiv.org/abs/2402.16445).
-
-### Mol-LLaMA
-
-- Model: [DongkiKim/Mol-Llama-3.1-8B-Instruct](https://huggingface.co/DongkiKim/Mol-Llama-3.1-8B-Instruct)
-- Molecular path: MoleculeSTM, Uni-Mol, modality blending and Q-Former.
-- Representation: mean of Q-Former query tokens.
-- Paper: [Mol-LLaMA](https://arxiv.org/abs/2502.13449).
-
-The 8B text decoder is not included in the molecular embedding graph. Even so, the legacy profile
-has much higher export and runtime requirements than the default pair.
-
-## Notebook Workflow
-
-Run the notebooks in order. Artifacts move between stages through Hugging Face repositories.
-
-### 1. Export Encoders
-
-Open [01_export_llms_to_onnx.ipynb](notebooks/01_export_llms_to_onnx.ipynb).
-
-The lightweight export works on CPU or GPU and does not require Transformer Engine. A GPU reduces
-export and parity-check time. The resulting ONNX graphs can run with ONNX Runtime on CPU.
-
-The default profile:
-
-1. downloads ESM-2 and MoLFormer;
-2. removes their masked-language-model prediction heads from the exported path;
-3. exports pooled embedding graphs;
-4. checks PyTorch/ONNX numerical parity;
-5. validates external ONNX files;
-6. optionally clears the existing Hugging Face model repositories;
-7. uploads both complete encoder folders.
-
-Default repositories:
+## 📁 Repository Structure
 
 ```text
-your-name/esm2-affinity-onnx
-your-name/molformer-affinity-onnx
+.
+├── app.py                              # Local Gradio launcher
+├── configs/
+│   └── colab.toml                     # Training configuration
+├── data/
+│   └── sample_train.csv               # Small schema/example dataset
+├── docs/
+│   ├── LINKEDIN_POST.md               # Ready-to-use launch post
+│   └── assets/pipeline.svg            # Animated README diagram
+├── notebooks/
+│   ├── 01_export_llms_to_onnx.ipynb
+│   ├── 02_build_embedding_dataset.ipynb
+│   └── 03_train_validate_export.ipynb
+├── scripts/
+│   └── deploy_hf_space.py
+├── space/                              # Docker Space application
+├── src/affinity/                       # Training, export and inference package
+├── tests/
+├── MODEL_CARD.md
+└── pyproject.toml
 ```
 
-Set `ENCODER_PROFILE = "legacy"` to export:
+## 🛠️ Installation
 
-```text
-your-name/prollama-affinity-onnx
-your-name/mol-llama-affinity-onnx
-```
+Python 3.11 is recommended.
 
-`CLEAN_REPOSITORIES = True` deletes and recreates the selected remote repositories before upload.
-This also removes their previous commit history.
-
-### 2. Build Embedding Dataset
-
-Open [02_build_embedding_dataset.ipynb](notebooks/02_build_embedding_dataset.ipynb).
-
-This notebook:
-
-1. downloads the selected encoder repositories;
-2. downloads and validates the competition CSV;
-3. detects the available ONNX Runtime CPU or CUDA provider;
-4. embeds each unique protein and molecule;
-5. writes resumable molecule shards;
-6. creates cold-protein train, validation and test splits;
-7. uploads CSV rows and compressed feature matrices.
-
-Default repository:
-
-```text
-your-name/protein-compound-affinity-esm2-molformer
-```
-
-Default extraction settings:
-
-```text
-ESM-2 maximum length: 1024 tokens
-ESM-2 batch size: 16
-MoLFormer maximum length: 202 tokens
-MoLFormer batch size: 32
-Molecule shard size: 1000
-```
-
-Reduce batch sizes if GPU or system memory is limited. Existing molecule shards are skipped when
-the extraction command is restarted.
-
-### 3. Train, Validate and Export
-
-Open [03_train_validate_export.ipynb](notebooks/03_train_validate_export.ipynb).
-
-The notebook:
-
-1. downloads the profile-specific embedding dataset;
-2. fits normalization using training rows only;
-3. trains the fusion MLP;
-4. selects the best validation-RMSE checkpoint;
-5. evaluates the held-out test split;
-6. reports MAE, RMSE, R² and Pearson correlation;
-7. exports and validates the affinity head as ONNX;
-8. uploads the final model.
-
-Default repository:
-
-```text
-your-name/protein-compound-affinity-esm2-molformer-onnx
-```
-
-## Data Splitting
-
-The default split is cold protein. A protein sequence appears in only one split, which avoids the
-same protein leaking into training and testing.
-
-```mermaid
-flowchart TB
-    D["All rows"] --> G["Group by protein sequence"]
-    G --> T["80% protein groups: train"]
-    G --> V["10% protein groups: validation"]
-    G --> E["10% protein groups: test"]
-```
-
-## Local Inference
-
-Install:
+### Linux, Colab, or Kaggle
 
 ```bash
+git clone https://github.com/karthikeyanr103/Protein-Ligand-Affinity-Prediction-Using-LLM.git
+cd Protein-Ligand-Affinity-Prediction-Using-LLM
+
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[space]"
+python -m pip install --upgrade pip
+pip install -e ".[export,space,dev]"
 ```
 
-Windows PowerShell activation:
+### Windows PowerShell
 
 ```powershell
-.venv\Scripts\Activate.ps1
-pip install -e ".[space]"
+git clone https://github.com/karthikeyanr103/Protein-Ligand-Affinity-Prediction-Using-LLM.git
+Set-Location Protein-Ligand-Affinity-Prediction-Using-LLM
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[export,space,dev]"
 ```
 
-Run:
+Use `.[gpu-runtime]` instead of `.[space]` when ONNX Runtime CUDA inference is required.
+
+## 📓 End-to-End Workflow
+
+The notebooks are designed for Google Colab or Kaggle and should be run in order.
+
+### 1. Export ESM-2 and MoLFormer to ONNX
+
+Notebook: [`01_export_llms_to_onnx.ipynb`](notebooks/01_export_llms_to_onnx.ipynb)
+
+Equivalent commands:
+
+```bash
+affinity-export-esm2-onnx \
+  --model-id facebook/esm2_t12_35M_UR50D \
+  --output /content/onnx/esm2 \
+  --max-length 1024
+
+affinity-export-molformer-onnx \
+  --model-id ibm-research/MoLFormer-XL-both-10pct \
+  --output /content/onnx/molformer \
+  --max-length 202
+```
+
+The exporters:
+
+1. download the original checkpoints and tokenizers;
+2. expose pooled embedding outputs;
+3. export dynamic-batch ONNX graphs;
+4. write large parameters as ONNX external data when needed;
+5. compare PyTorch and ONNX outputs before accepting the export;
+6. store preprocessing metadata with the model.
+
+Do not upload only `model.onnx`. ONNX external-data files located beside it are part of the model
+and are required by ONNX Runtime.
+
+### 2. Extract embeddings
+
+Notebook: [`02_build_embedding_dataset.ipynb`](notebooks/02_build_embedding_dataset.ipynb)
+
+```bash
+affinity-extract-onnx \
+  --data /content/data/train.csv \
+  --protein-onnx /content/onnx/esm2 \
+  --molecule-onnx /content/onnx/molformer \
+  --protein-encoder esm2 \
+  --molecule-encoder molformer \
+  --protein-model-id facebook/esm2_t12_35M_UR50D \
+  --molecule-model-id ibm-research/MoLFormer-XL-both-10pct \
+  --protein-output /content/cache/esm2_embeddings.npz \
+  --molecule-output /content/cache/molformer \
+  --protein-max-length 1024 \
+  --molecule-max-length 202 \
+  --protein-batch-size 16 \
+  --molecule-batch-size 32 \
+  --molecule-shard-size 1000 \
+  --device auto
+```
+
+`--device auto` checks installed ONNX Runtime providers and selects CUDA when available; otherwise,
+it uses CPU. Molecule embeddings are written in resumable shards so interrupted notebook sessions
+can continue without recomputing completed shards.
+
+### 3. Create train, validation, and test data
+
+```bash
+affinity-prepare-dataset \
+  --data /content/data/train.csv \
+  --protein-embeddings /content/cache/esm2_embeddings.npz \
+  --molecule-embeddings /content/cache/molformer \
+  --output /content/embedding_dataset \
+  --split-strategy cold_protein \
+  --seed 42
+```
+
+The default **cold-protein split** assigns each distinct protein to only one split:
+
+```mermaid
+flowchart LR
+    D["Dataset"] --> G["Group by protein"]
+    G --> T["80% train"]
+    G --> V["10% validation"]
+    G --> E["10% test"]
+```
+
+This is stricter than a random row split because the test set contains unseen protein sequences.
+The CLI also supports `cold_compound`, `pair`, and `random`.
+
+### 4. Train and evaluate the affinity head
+
+Notebook: [`03_train_validate_export.ipynb`](notebooks/03_train_validate_export.ipynb)
+
+```bash
+affinity-train --config configs/colab.toml
+affinity-evaluate --artifacts /content/artifacts/affinity
+```
+
+The training stage:
+
+- fits normalization statistics on training features only;
+- trains the fusion MLP;
+- tracks validation RMSE;
+- applies early stopping;
+- restores the best checkpoint;
+- evaluates the untouched test split;
+- reports MAE, RMSE, R², and Pearson correlation.
+
+### 5. Export the trained affinity model
+
+```bash
+affinity-export-onnx \
+  --artifacts /content/artifacts/affinity \
+  --output /content/artifacts/affinity/model.onnx
+```
+
+The final deployable directory must contain:
+
+```text
+model.onnx
+normalization.npz
+metadata.json
+```
+
+## 💻 Inference
+
+### Command line
+
+```bash
+affinity-predict \
+  --protein "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG" \
+  --smiles "CN1C=NC2=C1C(=O)N(C(=O)N2C)C" \
+  --protein-onnx ./models/esm2-affinity-onnx \
+  --molecule-onnx ./models/molformer-affinity-onnx \
+  --artifacts ./models/protein-compound-affinity-esm2-molformer-onnx \
+  --device auto
+```
+
+### Local web application
 
 ```bash
 python app.py \
   --protein-encoder ./models/esm2-affinity-onnx \
   --molecule-encoder ./models/molformer-affinity-onnx \
-  --affinity ./models/protein-compound-affinity-esm2-molformer-onnx
+  --affinity ./models/protein-compound-affinity-esm2-molformer-onnx \
+  --host 127.0.0.1 \
+  --port 7860
 ```
 
-The application provides affinity inference, protein composition summaries, molecule descriptors,
-2D molecule rendering, generated molecule conformers, and uploaded PDB visualization.
+Open [http://127.0.0.1:7860](http://127.0.0.1:7860).
 
-## Hugging Face Space
+## ☁️ Deploy to Hugging Face Spaces
 
-The repository includes a deployment script that packages `src/affinity` into the Docker build
-context, creates the Space, configures variables and uploads the application.
+Create a Hugging Face token with write access, then authenticate:
+
+```bash
+pip install --upgrade huggingface-hub
+hf auth login
+```
+
+Alternatively, expose the token through an environment variable:
 
 ```bash
 export HF_TOKEN=hf_your_write_token
+```
 
+PowerShell:
+
+```powershell
+$env:HF_TOKEN = "hf_your_write_token"
+```
+
+Deploy or update the Docker Space:
+
+```bash
 python scripts/deploy_hf_space.py \
-  --space your-name/protein-compound-affinity \
-  --protein-repo your-name/esm2-affinity-onnx \
-  --molecule-repo your-name/molformer-affinity-onnx \
-  --affinity-repo your-name/protein-compound-affinity-esm2-molformer-onnx
+  --space IAmKarthik/protein-compound-affinity \
+  --protein-repo IAmKarthik/esm2-affinity-onnx \
+  --molecule-repo IAmKarthik/molformer-affinity-onnx \
+  --affinity-repo IAmKarthik/protein-compound-affinity-esm2-molformer-onnx
 ```
 
-The script sets:
+The script:
 
-```text
-PROTEIN_ONNX_REPO
-MOLECULE_ONNX_REPO
-AFFINITY_MODEL_REPO
-ONNX_DEVICE=cpu
-```
+1. validates all three model repositories;
+2. creates the Docker Space when it does not exist;
+3. packages `space/` and `src/affinity/`;
+4. configures `PROTEIN_ONNX_REPO`, `MOLECULE_ONNX_REPO`, and `AFFINITY_MODEL_REPO`;
+5. sets `ONNX_DEVICE=cpu`;
+6. uploads the application and triggers a rebuild.
 
-The same command works from Colab after installing the project. Use `--private` when the Space
-itself should be private. For private model repositories, set a separate read-only token:
+For private model repositories, provide a separate read-only token:
 
 ```bash
 export HF_MODEL_TOKEN=hf_read_only_token
 ```
 
-The deployment write token is not copied into the Space.
+The deployment write token is not stored in the Space.
 
-The affinity model verifies that its recorded encoder IDs match the downloaded ONNX exports. A
-head trained with ESM-2/MoLFormer will refuse to run with ProLLaMA/Mol-LLaMA, and vice versa.
+## 🧠 Optional Legacy Profile
 
-## Repository
+The repository retains experimental support for:
 
-```text
-.
-|-- app.py
-|-- configs/
-|-- data/
-|-- notebooks/
-|   |-- 01_export_llms_to_onnx.ipynb
-|   |-- 02_build_embedding_dataset.ipynb
-|   `-- 03_train_validate_export.ipynb
-|-- space/
-|-- src/affinity/
-|-- tests/
-|-- MODEL_CARD.md
-`-- pyproject.toml
+| Input | Legacy model | Scale |
+|---|---|---|
+| Protein | [`GreatCaptainNemo/ProLLaMA`](https://huggingface.co/GreatCaptainNemo/ProLLaMA) | Llama-family 7B |
+| Molecule | [`DongkiKim/Mol-Llama-3.1-8B-Instruct`](https://huggingface.co/DongkiKim/Mol-Llama-3.1-8B-Instruct) | Llama 3.1 8B with molecular encoders |
+
+These models need substantially more RAM, storage, export time, and ONNX external-data files.
+They are retained for experimentation, but the lightweight ESM-2/MoLFormer profile is the default
+for reproducible portfolio deployment.
+
+## 🧪 Tests
+
+```bash
+pytest
 ```
 
-## Reproducibility
+The tests cover dataset splitting, embedding-table loading, regression metrics, and Mol-LLaMA
+aggregation behavior.
 
-The workflow records:
+## 🔧 Troubleshooting
 
-- encoder profile and Hugging Face model IDs;
-- tokenizer maximum lengths;
-- pooling methods;
-- ONNX export parity errors;
-- extraction runtime and device;
-- dataset split strategy and seed;
-- normalization statistics;
-- test metrics.
+| Problem | Resolution |
+|---|---|
+| ONNX model exceeds 2 GiB | Export to a file path and keep all generated external-data files beside `model.onnx`. |
+| ONNX Runtime cannot allocate memory | Use CPU execution, reduce batch size/sequence length, disable the memory arena when appropriate, or choose the lightweight profile. |
+| `pthread_setaffinity_np failed` | Set explicit ONNX Runtime intra/inter-op thread counts. This message is usually a container CPU-affinity issue. |
+| RDKit reports `libXrender.so.1` missing | Install `libxrender1`, `libxext6`, and `libsm6`; the provided Dockerfile already does this. |
+| 3Dmol.js does not load in a Space | The final application uses server-rendered Pillow images and no longer depends on 3Dmol.js or an external JavaScript CDN. |
+| Space remains on the setup page | Run `scripts/deploy_hf_space.py` and wait for the Docker build to finish. |
+| ESM tokenizer reports `TokenizersBackend` | Use the model-specific `EsmTokenizer`; this is handled by the project runtime. |
 
-## Scope
+## 📚 References
 
-This is a portfolio and research project.
+### Dataset
 
-- A generated conformer is not an experimental structure.
-- The model does not predict a protein-ligand binding pose.
-- The affinity output is not clinical evidence.
-- Results require independent experimental validation.
+- [Structure-free protein-ligand affinity prediction competition](https://www.kaggle.com/competitions/protein-compound-affinity)
+- [Competition data page](https://www.kaggle.com/competitions/protein-compound-affinity/data)
+
+### Models and papers
+
+1. Lin, Z. et al. [Evolutionary-scale prediction of atomic-level protein structure with a language model](https://doi.org/10.1126/science.ade2574). *Science*, 2023.
+2. Ross, J. et al. [Large-scale chemical language representations capture molecular structure and properties](https://doi.org/10.1038/s42256-022-00580-7). *Nature Machine Intelligence*, 2022.
+3. Lv, L. et al. [ProLLaMA: A Protein Large Language Model for Multi-Task Protein Language Processing](https://arxiv.org/abs/2402.16445), 2024.
+4. Kim, D. et al. [Mol-LLaMA: Towards General Understanding of Molecules in Large Molecular Language Model](https://arxiv.org/abs/2502.13449), 2025.
+
+### Software
+
+- [Hugging Face Transformers](https://huggingface.co/docs/transformers/)
+- [ONNX](https://onnx.ai/)
+- [ONNX Runtime](https://onnxruntime.ai/docs/)
+- [RDKit](https://www.rdkit.org/docs/)
+- [Gradio](https://www.gradio.app/docs/)
+- [RCSB Protein Data Bank](https://www.rcsb.org/)
+
+## ⚠️ Limitations
+
+- This project is a portfolio and research demonstration.
+- The model does not predict a binding pose or interaction residues.
+- Generated molecular conformers are computational illustrations, not experimental structures.
+- Protein 3D rendering requires uploaded or downloaded PDB coordinates.
+- Long sequences and SMILES are truncated to the encoder limits.
+- Predictions can be unreliable outside the chemical and protein distributions represented by the
+  pretrained encoders and affinity dataset.
+- Results are not medical, clinical, toxicological, or drug-development advice.
+- Experimental validation is required before scientific or commercial use.
+
+## 🙏 Acknowledgements
+
+This project builds on the work of the Kaggle competition organizers, Meta AI's ESM team, IBM
+Research's MoLFormer team, the ProLLaMA and Mol-LLaMA authors, Hugging Face, Microsoft ONNX
+Runtime, RDKit, Gradio, and the RCSB Protein Data Bank.
+
+## 📄 License
+
+Project code is released under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). Upstream datasets, model
+weights, and software packages retain their own licenses and terms of use.
+
+---
+
+<div align="center">
+
+Built by [Karthikeyan R](https://github.com/karthikeyanr103) ·
+[Try the live model](https://huggingface.co/spaces/IAmKarthik/protein-compound-affinity)
+
+⭐ If this project is useful, consider starring the repository.
+
+</div>

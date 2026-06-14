@@ -40,8 +40,7 @@ space = [
   "gradio>=5,<7",
   "huggingface-hub>=0.24",
   "onnxruntime>=1.18",
-  "plotly>=5.22",
-  "py3Dmol>=2.2",
+  "pillow>=10",
   "rdkit>=2024.3",
   "transformers>=4.57.3,<5",
 ]
