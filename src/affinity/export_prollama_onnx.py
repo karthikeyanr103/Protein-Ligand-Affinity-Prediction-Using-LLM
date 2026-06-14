@@ -4,6 +4,7 @@ import argparse
 import gc
 import inspect
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +71,43 @@ def _low_memory_session(model_path: Path):
         sess_options=options,
         providers=["CPUExecutionProvider"],
     )
+
+
+def _remove_rejected_quantization(directory: Path) -> None:
+    quantized_directory = directory / "int8"
+    if quantized_directory.exists():
+        shutil.rmtree(quantized_directory)
+
+    legacy_graph = directory / "prollama_encoder_int8.onnx"
+    if not legacy_graph.exists():
+        return
+
+    try:
+        import onnx
+
+        model = onnx.load(str(legacy_graph), load_external_data=False)
+        fp_graph = directory / "prollama_encoder.onnx"
+        fp_locations = set()
+        if fp_graph.exists():
+            fp_model = onnx.load(str(fp_graph), load_external_data=False)
+            fp_locations = {
+                item.value
+                for tensor in fp_model.graph.initializer
+                for item in tensor.external_data
+                if item.key == "location"
+            }
+        locations = {
+            item.value
+            for tensor in model.graph.initializer
+            for item in tensor.external_data
+            if item.key == "location"
+        }
+        for location in locations - fp_locations:
+            external_file = legacy_graph.parent / location
+            if external_file.is_file():
+                external_file.unlink()
+    finally:
+        legacy_graph.unlink(missing_ok=True)
 
 
 def export_prollama_feature_onnx(
@@ -167,6 +205,7 @@ def export_prollama_feature_onnx(
 
     final_destination = destination
     quantized_max_absolute_error = None
+    quantization_status = "not_requested"
     if quantize:
         if skip_parity_check:
             raise ValueError(
@@ -181,14 +220,20 @@ def export_prollama_feature_onnx(
 
         from onnxruntime.quantization import QuantType, quantize_dynamic
 
-        final_destination = output / "prollama_encoder_int8.onnx"
+        _remove_rejected_quantization(output)
+        quantized_directory = output / "int8"
+        quantized_directory.mkdir(parents=True, exist_ok=True)
+        quantized_destination = quantized_directory / "prollama_encoder_int8.onnx"
         quantize_dynamic(
             destination,
-            final_destination,
+            quantized_destination,
+            per_channel=True,
+            reduce_range=True,
             weight_type=QuantType.QInt8,
+            op_types_to_quantize=["MatMul"],
             use_external_data_format=True,
         )
-        quantized_session = _low_memory_session(final_destination)
+        quantized_session = _low_memory_session(quantized_destination)
         quantized_output = quantized_session.run(
             ["last_hidden_state"],
             feeds,
@@ -197,10 +242,20 @@ def export_prollama_feature_onnx(
             np.max(np.abs(reference - quantized_output))
         )
         if not np.allclose(reference, quantized_output, rtol=0.15, atol=0.15):
-            raise ValueError(
-                "Quantized ProLLaMA ONNX parity check failed; "
-                f"max error={quantized_max_absolute_error}"
+            del quantized_session
+            del quantized_output
+            gc.collect()
+            _remove_rejected_quantization(output)
+            quantization_status = "rejected_parity"
+            print(
+                "WARNING: INT8 ProLLaMA was rejected and removed because its "
+                f"parity error was {quantized_max_absolute_error}. "
+                "The valid FP32 ONNX model will be used instead.",
+                flush=True,
             )
+        else:
+            final_destination = quantized_destination
+            quantization_status = "accepted"
 
     (output / "export_metadata.json").write_text(
         json.dumps(
@@ -212,7 +267,16 @@ def export_prollama_feature_onnx(
                 "example_sequence_length": int(input_ids.shape[1]),
                 "fp_max_absolute_error": max_absolute_error,
                 "int8_max_absolute_error": quantized_max_absolute_error,
-                "quantized": quantize,
+                "quantized": quantization_status == "accepted",
+                "quantization_status": quantization_status,
+                "quantization_configuration": {
+                    "weight_type": "QInt8",
+                    "per_channel": True,
+                    "reduce_range": True,
+                    "op_types": ["MatMul"],
+                }
+                if quantize
+                else None,
                 "parity_check_skipped": skip_parity_check,
             },
             indent=2,

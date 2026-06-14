@@ -133,6 +133,62 @@ def _find_onnx_model(directory: str | Path, preferred: str = "") -> Path:
     return candidates[0]
 
 
+class TokenizedOnnxEmbedder:
+    def __init__(
+        self,
+        model_directory: str | Path,
+        tokenizer_id: str,
+        max_length: int,
+        providers: list[str] | None = None,
+    ) -> None:
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+
+        directory = Path(model_directory)
+        metadata_path = directory / "export_metadata.json"
+        self.metadata = (
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata_path.exists()
+            else {}
+        )
+        self.encoder_type = str(self.metadata.get("encoder_type", ""))
+        self.max_length = max_length
+        tokenizer_source = (
+            directory if (directory / "tokenizer_config.json").exists() else tokenizer_id
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_source,
+            trust_remote_code=True,
+        )
+        preferred = {
+            "esm2": "esm2_encoder_int8.onnx",
+            "molformer": "molformer_encoder_int8.onnx",
+        }.get(self.encoder_type, "")
+        self.session = ort.InferenceSession(
+            str(_find_onnx_model(directory, preferred)),
+            providers=providers or detect_onnx_providers(verbose=False),
+        )
+
+    def encode(self, values: list[str]) -> np.ndarray:
+        request_special_mask = any(
+            item.name == "special_tokens_mask" for item in self.session.get_inputs()
+        )
+        tokens = self.tokenizer(
+            values,
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_special_tokens_mask=request_special_mask,
+            return_tensors="np",
+        )
+        feeds = {
+            item.name: tokens[item.name].astype(np.int64)
+            for item in self.session.get_inputs()
+            if item.name in tokens
+        }
+        return self.session.run(["embedding"], feeds)[0].astype(np.float32)
+
+
 class ProLLaMAOnnxEmbedder:
     def __init__(
         self,
@@ -353,3 +409,29 @@ class MolLLaMAOnnxEmbedder:
                 self.session.run(["molecule_embedding"], feeds)[0][0]
             )
         return np.asarray(outputs, dtype=np.float32)
+
+
+def create_onnx_embedder(
+    encoder_type: str,
+    model_directory: str | Path,
+    model_id: str,
+    max_length: int,
+    providers: list[str] | None = None,
+):
+    if encoder_type in {"esm2", "molformer"}:
+        return TokenizedOnnxEmbedder(
+            model_directory,
+            tokenizer_id=model_id,
+            max_length=max_length,
+            providers=providers,
+        )
+    if encoder_type == "prollama":
+        return ProLLaMAOnnxEmbedder(
+            model_directory,
+            tokenizer_id=model_id,
+            max_length=max_length,
+            providers=providers,
+        )
+    if encoder_type == "mol_llama":
+        return MolLLaMAOnnxEmbedder(model_directory, providers=providers)
+    raise ValueError(f"Unsupported ONNX encoder type: {encoder_type}")

@@ -9,8 +9,7 @@ from tqdm.auto import tqdm
 from affinity.data import load_dataset
 from affinity.features import save_embedding_table
 from affinity.onnx_embeddings import (
-    MolLLaMAOnnxEmbedder,
-    ProLLaMAOnnxEmbedder,
+    create_onnx_embedder,
     detect_onnx_providers,
 )
 
@@ -20,14 +19,16 @@ def extract_proteins(args, proteins: list[str], providers: list[str]) -> None:
     if destination.exists() and not args.overwrite:
         print(f"Skipping existing protein cache: {destination}")
         return
-    embedder = ProLLaMAOnnxEmbedder(
-        args.prollama_onnx,
-        tokenizer_id=args.protein_model_id,
+    embedder = create_onnx_embedder(
+        args.protein_encoder,
+        args.protein_onnx,
+        model_id=args.protein_model_id,
         max_length=args.protein_max_length,
         providers=providers,
     )
     print(
-        f"ProLLaMA session providers: {embedder.session.get_providers()}",
+        f"Protein encoder ({args.protein_encoder}) providers: "
+        f"{embedder.session.get_providers()}",
         flush=True,
     )
     blocks = []
@@ -49,9 +50,18 @@ def extract_proteins(args, proteins: list[str], providers: list[str]) -> None:
         args.protein_model_id,
         settings={
             "runtime": "onnxruntime",
-            "prompt": "[Determine superfamily] Seq=<{value}>",
-            "pooling": "attention_masked_mean_last_hidden_state",
+            "encoder_type": args.protein_encoder,
+            "pooling": (
+                "mean_amino_acid_tokens"
+                if args.protein_encoder == "esm2"
+                else "attention_masked_mean_last_hidden_state"
+            ),
             "max_length": args.protein_max_length,
+            **(
+                {"prompt": "[Determine superfamily] Seq=<{value}>"}
+                if args.protein_encoder == "prollama"
+                else {}
+            ),
         },
     )
 
@@ -59,9 +69,16 @@ def extract_proteins(args, proteins: list[str], providers: list[str]) -> None:
 def extract_molecules(args, molecules: list[str], providers: list[str]) -> None:
     output = Path(args.molecule_output)
     output.mkdir(parents=True, exist_ok=True)
-    embedder = MolLLaMAOnnxEmbedder(args.mol_llama_onnx, providers=providers)
+    embedder = create_onnx_embedder(
+        args.molecule_encoder,
+        args.molecule_onnx,
+        model_id=args.molecule_model_id,
+        max_length=args.molecule_max_length,
+        providers=providers,
+    )
     print(
-        f"Mol-LLaMA session providers: {embedder.session.get_providers()}",
+        f"Molecule encoder ({args.molecule_encoder}) providers: "
+        f"{embedder.session.get_providers()}",
         flush=True,
     )
     total_shards = (len(molecules) + args.molecule_shard_size - 1) // args.molecule_shard_size
@@ -89,9 +106,10 @@ def extract_molecules(args, molecules: list[str], providers: list[str]) -> None:
         values = molecules[start:stop]
         progress.set_postfix_str(f"shard {shard_index + 1}/{total_shards}")
         embeddings = []
-        for smiles in values:
-            embeddings.append(embedder.encode([smiles])[0])
-            progress.update(1)
+        for batch_start in range(0, len(values), args.molecule_batch_size):
+            batch = values[batch_start : batch_start + args.molecule_batch_size]
+            embeddings.extend(embedder.encode(batch))
+            progress.update(len(batch))
         save_embedding_table(
             destination,
             values,
@@ -99,8 +117,18 @@ def extract_molecules(args, molecules: list[str], providers: list[str]) -> None:
             args.molecule_model_id,
             settings={
                 "runtime": "onnxruntime",
-                "pooling": "mean_qformer_query_tokens",
-                "conformer_seed": 42,
+                "encoder_type": args.molecule_encoder,
+                "pooling": (
+                    "pooler_output"
+                    if args.molecule_encoder == "molformer"
+                    else "mean_qformer_query_tokens"
+                ),
+                "max_length": args.molecule_max_length,
+                **(
+                    {"conformer_seed": 42}
+                    if args.molecule_encoder == "mol_llama"
+                    else {}
+                ),
             },
         )
     progress.close()
@@ -111,17 +139,34 @@ def main() -> None:
         description="Build resumable training caches with the deployed ONNX encoders"
     )
     parser.add_argument("--data", required=True)
-    parser.add_argument("--prollama-onnx", required=True)
-    parser.add_argument("--mol-llama-onnx", required=True)
+    parser.add_argument("--protein-onnx")
+    parser.add_argument("--molecule-onnx")
+    parser.add_argument("--prollama-onnx")
+    parser.add_argument("--mol-llama-onnx")
     parser.add_argument("--protein-output", required=True)
     parser.add_argument("--molecule-output", required=True)
-    parser.add_argument("--protein-model-id", default="GreatCaptainNemo/ProLLaMA")
+    parser.add_argument(
+        "--protein-encoder",
+        choices=["esm2", "prollama"],
+        default="esm2",
+    )
+    parser.add_argument(
+        "--molecule-encoder",
+        choices=["molformer", "mol_llama"],
+        default="molformer",
+    )
+    parser.add_argument(
+        "--protein-model-id",
+        default="nvidia/esm2_t12_35M_UR50D",
+    )
     parser.add_argument(
         "--molecule-model-id",
-        default="DongkiKim/Mol-Llama-3.1-8B-Instruct",
+        default="ibm-research/MoLFormer-XL-both-10pct",
     )
-    parser.add_argument("--protein-batch-size", type=int, default=1)
-    parser.add_argument("--protein-max-length", type=int, default=1536)
+    parser.add_argument("--protein-batch-size", type=int, default=16)
+    parser.add_argument("--molecule-batch-size", type=int, default=32)
+    parser.add_argument("--protein-max-length", type=int, default=1024)
+    parser.add_argument("--molecule-max-length", type=int, default=202)
     parser.add_argument("--molecule-shard-size", type=int, default=1000)
     parser.add_argument("--proteins-only", action="store_true")
     parser.add_argument("--molecules-only", action="store_true")
@@ -133,6 +178,18 @@ def main() -> None:
         help="ONNX Runtime device selection",
     )
     args = parser.parse_args()
+    if args.prollama_onnx:
+        args.protein_onnx = args.protein_onnx or args.prollama_onnx
+        args.protein_encoder = "prollama"
+        if args.protein_model_id == "nvidia/esm2_t12_35M_UR50D":
+            args.protein_model_id = "GreatCaptainNemo/ProLLaMA"
+    if args.mol_llama_onnx:
+        args.molecule_onnx = args.molecule_onnx or args.mol_llama_onnx
+        args.molecule_encoder = "mol_llama"
+        if args.molecule_model_id == "ibm-research/MoLFormer-XL-both-10pct":
+            args.molecule_model_id = "DongkiKim/Mol-Llama-3.1-8B-Instruct"
+    if not args.protein_onnx or not args.molecule_onnx:
+        parser.error("--protein-onnx and --molecule-onnx are required")
     if args.proteins_only and args.molecules_only:
         parser.error("--proteins-only and --molecules-only cannot be combined")
 
@@ -147,10 +204,10 @@ def main() -> None:
     )
     providers = detect_onnx_providers(args.device, verbose=True)
     if not args.molecules_only:
-        print("Loading ProLLaMA ONNX session...", flush=True)
+        print(f"Loading {args.protein_encoder} protein session...", flush=True)
         extract_proteins(args, proteins, providers)
     if not args.proteins_only:
-        print("Loading Mol-LLaMA ONNX session...", flush=True)
+        print(f"Loading {args.molecule_encoder} molecule session...", flush=True)
         extract_molecules(args, molecules, providers)
 
 

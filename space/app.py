@@ -31,19 +31,25 @@ def validate_smiles(smiles: str) -> str:
 
 
 def _resolve_model(
-    local_variable: str,
-    repo_variable: str,
-    allow_patterns: list[str],
+    local_variables: str | tuple[str, ...],
+    repo_variables: str | tuple[str, ...],
+    allow_patterns: list[str] | None,
 ) -> Path:
-    local_path = os.getenv(local_variable, "")
+    local_variables = (
+        (local_variables,) if isinstance(local_variables, str) else local_variables
+    )
+    repo_variables = (repo_variables,) if isinstance(repo_variables, str) else repo_variables
+    local_path = next((os.getenv(name, "") for name in local_variables if os.getenv(name)), "")
     if local_path:
         path = Path(local_path).expanduser().resolve()
         if not path.exists():
             raise RuntimeError(f"Local model path does not exist: {path}")
         return path
-    repo_id = os.getenv(repo_variable, "")
+    repo_id = next((os.getenv(name, "") for name in repo_variables if os.getenv(name)), "")
     if not repo_id:
-        raise RuntimeError(f"Set {local_variable} or {repo_variable}")
+        raise RuntimeError(
+            f"Set one of {local_variables} or one of {repo_variables}"
+        )
     return Path(
         snapshot_download(
             repo_id,
@@ -55,32 +61,23 @@ def _resolve_model(
 
 @lru_cache(maxsize=1)
 def get_predictor() -> ThreeOnnxAffinityPredictor:
-    pro_variant = os.getenv("PROLLAMA_ONNX_VARIANT", "int8").lower()
-    mol_variant = os.getenv("MOL_LLAMA_ONNX_VARIANT", "int8").lower()
-    pro_pattern = "*int8*" if pro_variant == "int8" else "prollama_encoder.onnx*"
-    mol_pattern = "*int8*" if mol_variant == "int8" else "mol_llama_encoder.onnx*"
     return ThreeOnnxAffinityPredictor(
         artifact_directory=_resolve_model(
             "AFFINITY_MODEL_PATH",
             "AFFINITY_MODEL_REPO",
             ["model.onnx", "normalization.npz", "metadata.json"],
         ),
-        prollama_directory=_resolve_model(
-            "PROLLAMA_ONNX_PATH",
-            "PROLLAMA_ONNX_REPO",
-            [
-                pro_pattern,
-                "tokenizer*",
-                "special_tokens_map.json",
-                "config.json",
-                "export_metadata.json",
-            ],
+        protein_directory=_resolve_model(
+            ("PROTEIN_ONNX_PATH", "PROLLAMA_ONNX_PATH"),
+            ("PROTEIN_ONNX_REPO", "PROLLAMA_ONNX_REPO"),
+            None,
         ),
-        mol_llama_directory=_resolve_model(
-            "MOL_LLAMA_ONNX_PATH",
-            "MOL_LLAMA_ONNX_REPO",
-            [mol_pattern, "unimol_dictionary.json", "export_metadata.json"],
+        molecule_directory=_resolve_model(
+            ("MOLECULE_ONNX_PATH", "MOL_LLAMA_ONNX_PATH"),
+            ("MOLECULE_ONNX_REPO", "MOL_LLAMA_ONNX_REPO"),
+            None,
         ),
+        device=os.getenv("ONNX_DEVICE", "auto"),
     )
 
 
@@ -153,7 +150,8 @@ EXAMPLE_SMILES = "C1CC1(C2=CC=C(C=C2)F)C(=O)N3CC4CC4(C3)C5=CNC6=C5C=CC=N6"
 with gr.Blocks(title="Protein-Compound Affinity Explorer") as demo:
     gr.Markdown(
         "# Protein-Compound Affinity Explorer\n"
-        "Each prediction runs ProLLaMA ONNX, Mol-LLaMA ONNX, and the affinity ONNX head. "
+        "Each prediction runs protein encoder ONNX, molecule encoder ONNX, and the "
+        "affinity ONNX head. "
         "The first request downloads and initializes all three CPU models."
     )
     with gr.Tab("Predict"):

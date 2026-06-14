@@ -6,16 +6,28 @@ import os
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local ONNX Gradio application")
-    parser.add_argument("--prollama", required=True, help="ProLLaMA ONNX directory")
-    parser.add_argument("--mol-llama", required=True, help="Mol-LLaMA ONNX directory")
+    parser.add_argument(
+        "--protein-encoder",
+        "--prollama",
+        dest="protein_encoder",
+        required=True,
+        help="Protein ONNX directory",
+    )
+    parser.add_argument(
+        "--molecule-encoder",
+        "--mol-llama",
+        dest="molecule_encoder",
+        required=True,
+        help="Molecule ONNX directory",
+    )
     parser.add_argument("--affinity", required=True, help="Affinity ONNX directory")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true")
     args = parser.parse_args()
 
-    os.environ["PROLLAMA_ONNX_PATH"] = args.prollama
-    os.environ["MOL_LLAMA_ONNX_PATH"] = args.mol_llama
+    os.environ["PROTEIN_ONNX_PATH"] = args.protein_encoder
+    os.environ["MOLECULE_ONNX_PATH"] = args.molecule_encoder
     os.environ["AFFINITY_MODEL_PATH"] = args.affinity
 
     from space.app import demo

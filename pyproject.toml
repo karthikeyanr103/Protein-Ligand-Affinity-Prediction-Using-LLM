@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "protein-compound-affinity"
 version = "0.1.0"
-description = "Colab-first protein-compound affinity training and three-model ONNX inference."
+description = "Protein-compound affinity prediction with selectable scientific ONNX encoders."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -24,6 +24,7 @@ export = [
   "onnx>=1.16",
   "onnxruntime>=1.18",
   "rdkit>=2024.3",
+  "transformer-engine[pytorch]>=2.0; platform_system == 'Linux'",
   "transformers>=4.43,<5",
 ]
 runtime = [
@@ -54,6 +55,8 @@ affinity-evaluate = "affinity.evaluate:main"
 affinity-export-onnx = "affinity.export_onnx:main"
 affinity-export-mol-onnx = "affinity.export_mol_llama_onnx:main"
 affinity-export-protein-onnx = "affinity.export_prollama_onnx:main"
+affinity-export-esm2-onnx = "affinity.export_sequence_encoders_onnx:esm2_main"
+affinity-export-molformer-onnx = "affinity.export_sequence_encoders_onnx:molformer_main"
 affinity-extract-onnx = "affinity.extract_onnx_embeddings:main"
 affinity-prepare-dataset = "affinity.prepare_dataset:main"
 affinity-predict = "affinity.inference:main"

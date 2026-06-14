@@ -5,21 +5,29 @@ from pathlib import Path
 
 import numpy as np
 
-from affinity.onnx_embeddings import MolLLaMAOnnxEmbedder, ProLLaMAOnnxEmbedder
+from affinity.onnx_embeddings import create_onnx_embedder, detect_onnx_providers
 from affinity.pipeline import load_metadata, standardize_apply
 
 
 class ThreeOnnxAffinityPredictor:
-    """ProLLaMA ONNX + Mol-LLaMA ONNX + affinity-head ONNX inference."""
+    """Protein ONNX + molecule ONNX + affinity-head ONNX inference."""
 
     def __init__(
         self,
         artifact_directory: str | Path,
-        prollama_directory: str | Path,
-        mol_llama_directory: str | Path,
+        protein_directory: str | Path | None = None,
+        molecule_directory: str | Path | None = None,
+        device: str = "auto",
+        *,
+        prollama_directory: str | Path | None = None,
+        mol_llama_directory: str | Path | None = None,
     ) -> None:
         import onnxruntime as ort
 
+        protein_directory = protein_directory or prollama_directory
+        molecule_directory = molecule_directory or mol_llama_directory
+        if protein_directory is None or molecule_directory is None:
+            raise ValueError("Both protein and molecule ONNX directories are required")
         artifact = Path(artifact_directory)
         metadata = load_metadata(artifact / "metadata.json")
         feature_metadata = metadata.get("features", {})
@@ -28,37 +36,48 @@ class ThreeOnnxAffinityPredictor:
 
         protein_settings = feature_metadata.get("protein_extraction", {})
         molecule_settings = feature_metadata.get("molecule_extraction", {})
-        expected_prompt = "[Determine superfamily] Seq=<{value}>"
-        if protein_settings.get("prompt", expected_prompt) != expected_prompt:
-            raise ValueError("The artifact uses an unsupported ProLLaMA prompt")
-        if protein_settings.get(
-            "pooling", "attention_masked_mean_last_hidden_state"
-        ) != "attention_masked_mean_last_hidden_state":
-            raise ValueError("The artifact uses unsupported ProLLaMA pooling")
-        if molecule_settings.get(
-            "pooling", "mean_qformer_query_tokens"
-        ) != "mean_qformer_query_tokens":
-            raise ValueError("The artifact uses unsupported Mol-LLaMA pooling")
-
-        self.protein_embedder = ProLLaMAOnnxEmbedder(
-            model_directory=prollama_directory,
-            tokenizer_id=feature_metadata["protein_model"],
+        protein_type = protein_settings.get("encoder_type")
+        if not protein_type:
+            protein_type = (
+                "prollama"
+                if "prollama" in feature_metadata["protein_model"].lower()
+                else "esm2"
+            )
+        molecule_type = molecule_settings.get("encoder_type")
+        if not molecule_type:
+            molecule_type = (
+                "mol_llama"
+                if "mol-llama" in feature_metadata["molecule_model"].lower()
+                else "molformer"
+            )
+        providers = detect_onnx_providers(device, verbose=True)
+        self.protein_embedder = create_onnx_embedder(
+            protein_type,
+            model_directory=protein_directory,
+            model_id=feature_metadata["protein_model"],
             max_length=int(protein_settings.get("max_length", 1536)),
+            providers=providers,
         )
         exported_protein_id = self.protein_embedder.metadata.get("model_id")
         if exported_protein_id and exported_protein_id != feature_metadata["protein_model"]:
             raise ValueError(
-                "ProLLaMA ONNX model ID does not match the training embedding cache"
+                "Protein ONNX model ID does not match the training embedding cache"
             )
-        self.molecule_embedder = MolLLaMAOnnxEmbedder(mol_llama_directory)
+        self.molecule_embedder = create_onnx_embedder(
+            molecule_type,
+            model_directory=molecule_directory,
+            model_id=feature_metadata["molecule_model"],
+            max_length=int(molecule_settings.get("max_length", 202)),
+            providers=providers,
+        )
         exported_molecule_id = self.molecule_embedder.metadata.get("model_id")
         if exported_molecule_id and exported_molecule_id != feature_metadata["molecule_model"]:
             raise ValueError(
-                "Mol-LLaMA ONNX model ID does not match the training embedding cache"
+                "Molecule ONNX model ID does not match the training embedding cache"
             )
         self.session = ort.InferenceSession(
             str(artifact / "model.onnx"),
-            providers=["CPUExecutionProvider"],
+            providers=providers,
         )
         normalization = np.load(artifact / "normalization.npz")
         self.mean = normalization["mean"]
@@ -81,18 +100,30 @@ class ThreeOnnxAffinityPredictor:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Predict affinity through three CPU ONNX models"
+        description="Predict affinity through three ONNX models"
     )
     parser.add_argument("--protein", required=True)
     parser.add_argument("--smiles", required=True)
     parser.add_argument("--artifacts", default="/content/artifacts/affinity")
-    parser.add_argument("--prollama-onnx", required=True)
-    parser.add_argument("--mol-llama-onnx", required=True)
+    parser.add_argument(
+        "--protein-onnx",
+        "--prollama-onnx",
+        dest="protein_onnx",
+        required=True,
+    )
+    parser.add_argument(
+        "--molecule-onnx",
+        "--mol-llama-onnx",
+        dest="molecule_onnx",
+        required=True,
+    )
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     args = parser.parse_args()
     predictor = ThreeOnnxAffinityPredictor(
         artifact_directory=args.artifacts,
-        prollama_directory=args.prollama_onnx,
-        mol_llama_directory=args.mol_llama_onnx,
+        protein_directory=args.protein_onnx,
+        molecule_directory=args.molecule_onnx,
+        device=args.device,
     )
     prediction = float(predictor.predict([args.protein], [args.smiles])[0])
     print(f"{prediction:.6f}")
