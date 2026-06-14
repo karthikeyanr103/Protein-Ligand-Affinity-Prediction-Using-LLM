@@ -9,6 +9,17 @@ import torch
 from torch import nn
 
 
+def _load_tokenizer(model_id: str):
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+    try:
+        return AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    except ValueError as error:
+        if "Tokenizer class TokenizersBackend does not exist" not in str(error):
+            raise
+        return PreTrainedTokenizerFast.from_pretrained(model_id)
+
+
 class Esm2EmbeddingWrapper(nn.Module):
     def __init__(self, model: nn.Module) -> None:
         super().__init__()
@@ -58,11 +69,11 @@ def _export_encoder(
     quantize: bool = False,
 ) -> Path:
     import onnxruntime as ort
-    from transformers import AutoModel, AutoModelForMaskedLM, AutoTokenizer
+    from transformers import AutoModel, AutoModelForMaskedLM
 
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    tokenizer = _load_tokenizer(model_id)
     tokenizer.save_pretrained(output)
 
     if encoder_type == "esm2":

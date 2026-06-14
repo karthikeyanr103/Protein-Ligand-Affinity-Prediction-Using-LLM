@@ -25,17 +25,17 @@ export = [
   "onnxruntime>=1.18",
   "rdkit>=2024.3",
   "transformer-engine[pytorch]>=2.0; platform_system == 'Linux'",
-  "transformers>=4.43,<5",
+  "transformers>=4.57.3,<5",
 ]
 runtime = [
   "onnxruntime>=1.18",
   "rdkit>=2024.3",
-  "transformers>=4.43,<5",
+  "transformers>=4.57.3,<5",
 ]
 gpu-runtime = [
   "onnxruntime-gpu>=1.18",
   "rdkit>=2024.3",
-  "transformers>=4.43,<5",
+  "transformers>=4.57.3,<5",
 ]
 space = [
   "gradio>=5,<7",
@@ -44,7 +44,7 @@ space = [
   "plotly>=5.22",
   "py3Dmol>=2.2",
   "rdkit>=2024.3",
-  "transformers>=4.43,<5",
+  "transformers>=4.57.3,<5",
 ]
 dev = ["pytest>=8", "ruff>=0.5"]
 

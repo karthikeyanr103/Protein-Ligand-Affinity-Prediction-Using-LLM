@@ -133,6 +133,17 @@ def _find_onnx_model(directory: str | Path, preferred: str = "") -> Path:
     return candidates[0]
 
 
+def _load_tokenizer(source: str | Path):
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+    try:
+        return AutoTokenizer.from_pretrained(source, trust_remote_code=True)
+    except ValueError as error:
+        if "Tokenizer class TokenizersBackend does not exist" not in str(error):
+            raise
+        return PreTrainedTokenizerFast.from_pretrained(source)
+
+
 class TokenizedOnnxEmbedder:
     def __init__(
         self,
@@ -142,8 +153,6 @@ class TokenizedOnnxEmbedder:
         providers: list[str] | None = None,
     ) -> None:
         import onnxruntime as ort
-        from transformers import AutoTokenizer
-
         directory = Path(model_directory)
         metadata_path = directory / "export_metadata.json"
         self.metadata = (
@@ -156,10 +165,7 @@ class TokenizedOnnxEmbedder:
         tokenizer_source = (
             directory if (directory / "tokenizer_config.json").exists() else tokenizer_id
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_source,
-            trust_remote_code=True,
-        )
+        self.tokenizer = _load_tokenizer(tokenizer_source)
         preferred = {
             "esm2": "esm2_encoder_int8.onnx",
             "molformer": "molformer_encoder_int8.onnx",
