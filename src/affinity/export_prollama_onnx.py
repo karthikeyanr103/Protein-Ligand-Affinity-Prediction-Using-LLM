@@ -55,6 +55,23 @@ def _torch_dtype(name: str) -> torch.dtype:
     }[name]
 
 
+def _low_memory_session(model_path: Path):
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.enable_cpu_mem_arena = False
+    options.enable_mem_pattern = False
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    return ort.InferenceSession(
+        str(model_path),
+        sess_options=options,
+        providers=["CPUExecutionProvider"],
+    )
+
+
 def export_prollama_feature_onnx(
     model_id: str,
     output_directory: str | Path,
@@ -62,6 +79,7 @@ def export_prollama_feature_onnx(
     opset: int = 18,
     dtype: str = "float32",
     quantize: bool = False,
+    skip_parity_check: bool = False,
 ) -> Path:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -122,34 +140,39 @@ def export_prollama_feature_onnx(
         **export_options,
     )
 
-    import onnxruntime as ort
-
-    with torch.inference_mode():
-        reference = wrapper(*inputs).float().cpu().numpy()
+    reference = None
+    if not skip_parity_check:
+        with torch.inference_mode():
+            reference = wrapper(*inputs).float().cpu().numpy()
     del wrapper
     del decoder
     del model
     gc.collect()
-    session = ort.InferenceSession(
-        str(destination),
-        providers=["CPUExecutionProvider"],
-    )
     feeds = {
         "input_ids": input_ids.numpy(),
         "attention_mask": attention_mask.numpy(),
         "position_ids": position_ids.numpy(),
     }
-    exported = session.run(["last_hidden_state"], feeds)[0].astype(np.float32)
-    max_absolute_error = float(np.max(np.abs(reference - exported)))
-    tolerance = 1e-4 if dtype == "float32" else 2e-2
-    if not np.allclose(reference, exported, rtol=tolerance, atol=tolerance):
-        raise ValueError(
-            f"ProLLaMA ONNX parity check failed; max error={max_absolute_error}"
-        )
+    max_absolute_error = None
+    session = None
+    if not skip_parity_check:
+        session = _low_memory_session(destination)
+        exported = session.run(["last_hidden_state"], feeds)[0].astype(np.float32)
+        max_absolute_error = float(np.max(np.abs(reference - exported)))
+        tolerance = 1e-4 if dtype == "float32" else 2e-2
+        if not np.allclose(reference, exported, rtol=tolerance, atol=tolerance):
+            raise ValueError(
+                f"ProLLaMA ONNX parity check failed; max error={max_absolute_error}"
+            )
 
     final_destination = destination
     quantized_max_absolute_error = None
     if quantize:
+        if skip_parity_check:
+            raise ValueError(
+                "Quantization and --skip-parity-check cannot be combined. "
+                "Quantize in a fresh high-memory process after validating FP32."
+            )
         if dtype != "float32":
             raise ValueError("INT8 dynamic quantization requires a float32 ONNX source")
         del session
@@ -165,10 +188,7 @@ def export_prollama_feature_onnx(
             weight_type=QuantType.QInt8,
             use_external_data_format=True,
         )
-        quantized_session = ort.InferenceSession(
-            str(final_destination),
-            providers=["CPUExecutionProvider"],
-        )
+        quantized_session = _low_memory_session(final_destination)
         quantized_output = quantized_session.run(
             ["last_hidden_state"],
             feeds,
@@ -193,6 +213,7 @@ def export_prollama_feature_onnx(
                 "fp_max_absolute_error": max_absolute_error,
                 "int8_max_absolute_error": quantized_max_absolute_error,
                 "quantized": quantize,
+                "parity_check_skipped": skip_parity_check,
             },
             indent=2,
         ),
@@ -215,6 +236,14 @@ def main() -> None:
         default="float32",
     )
     parser.add_argument("--quantize", action="store_true")
+    parser.add_argument(
+        "--skip-parity-check",
+        action="store_true",
+        help=(
+            "Do not initialize ONNX Runtime after export. Use this on memory-limited "
+            "hosts, then validate in a fresh process."
+        ),
+    )
     args = parser.parse_args()
     print(
         export_prollama_feature_onnx(
@@ -224,6 +253,7 @@ def main() -> None:
             opset=args.opset,
             dtype=args.dtype,
             quantize=args.quantize,
+            skip_parity_check=args.skip_parity_check,
         )
     )
 
