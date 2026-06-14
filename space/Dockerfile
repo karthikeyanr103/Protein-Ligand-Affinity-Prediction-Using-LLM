@@ -6,6 +6,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/app
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
