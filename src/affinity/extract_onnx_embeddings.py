@@ -157,7 +157,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--protein-model-id",
-        default="nvidia/esm2_t12_35M_UR50D",
+        default="facebook/esm2_t12_35M_UR50D",
     )
     parser.add_argument(
         "--molecule-model-id",
@@ -181,7 +181,7 @@ def main() -> None:
     if args.prollama_onnx:
         args.protein_onnx = args.protein_onnx or args.prollama_onnx
         args.protein_encoder = "prollama"
-        if args.protein_model_id == "nvidia/esm2_t12_35M_UR50D":
+        if args.protein_model_id == "facebook/esm2_t12_35M_UR50D":
             args.protein_model_id = "GreatCaptainNemo/ProLLaMA"
     if args.mol_llama_onnx:
         args.molecule_onnx = args.molecule_onnx or args.mol_llama_onnx

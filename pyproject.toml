@@ -24,7 +24,6 @@ export = [
   "onnx>=1.16",
   "onnxruntime>=1.18",
   "rdkit>=2024.3",
-  "transformer-engine[pytorch]>=2.0; platform_system == 'Linux'",
   "transformers>=4.57.3,<5",
 ]
 runtime = [

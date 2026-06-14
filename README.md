@@ -51,7 +51,7 @@ normal notebook and CPU Space limits.
 
 | Profile | Protein encoder | Molecule encoder | Intended use |
 |---|---|---|---|
-| `lightweight` | `nvidia/esm2_t12_35M_UR50D` | `ibm-research/MoLFormer-XL-both-10pct` | Default training and deployment |
+| `lightweight` | `facebook/esm2_t12_35M_UR50D` | `ibm-research/MoLFormer-XL-both-10pct` | Default training and deployment |
 | `legacy` | `GreatCaptainNemo/ProLLaMA` | `DongkiKim/Mol-Llama-3.1-8B-Instruct` | Optional large-model experiment |
 
 Embedding datasets and affinity heads from different profiles are not interchangeable. The exact
@@ -62,8 +62,8 @@ trained model's `metadata.json`.
 
 ### Protein: ESM-2 35M
 
-[nvidia/esm2_t12_35M_UR50D](https://huggingface.co/nvidia/esm2_t12_35M_UR50D)
-is a 12-layer ESM-2 transformer with roughly 33.5 million parameters.
+[facebook/esm2_t12_35M_UR50D](https://huggingface.co/facebook/esm2_t12_35M_UR50D)
+is a 12-layer ESM-2 transformer with roughly 35 million parameters.
 
 - Backbone: bidirectional protein Transformer.
 - Objective: masked amino-acid language modeling.
@@ -72,6 +72,12 @@ is a 12-layer ESM-2 transformer with roughly 33.5 million parameters.
 - Exported representation: mean of the final hidden states over amino-acid tokens; padding and
   special tokens are excluded.
 - ONNX output: one fixed-size protein embedding.
+
+The originally considered
+[`nvidia/esm2_t12_35M_UR50D`](https://huggingface.co/nvidia/esm2_t12_35M_UR50D)
+checkpoint uses Transformer Engine custom CUDA layers. It requires a matching CUDA ABI and is not
+a portable source for standard ONNX export. The default therefore uses the standard Hugging Face
+ESM-2 checkpoint with the same 12-layer/35M model scale.
 
 Paper:
 [Evolutionary-scale prediction of atomic-level protein structure with a language model](https://www.science.org/doi/10.1126/science.ade2574).
@@ -121,9 +127,8 @@ Run the notebooks in order. Artifacts move between stages through Hugging Face r
 
 Open [01_export_llms_to_onnx.ipynb](notebooks/01_export_llms_to_onnx.ipynb).
 
-Use a Colab or Kaggle NVIDIA GPU runtime for this notebook. NVIDIA ESM-2 uses Transformer Engine
-while loading and tracing the PyTorch checkpoint. The resulting ONNX graph does not require
-Transformer Engine and can run with ONNX Runtime on CPU.
+The lightweight export works on CPU or GPU and does not require Transformer Engine. A GPU reduces
+export and parity-check time. The resulting ONNX graphs can run with ONNX Runtime on CPU.
 
 The default profile:
 

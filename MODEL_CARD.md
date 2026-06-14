@@ -15,7 +15,7 @@ This model is the regression head of a three-model pipeline.
 
 Inputs are embeddings produced by:
 
-- `nvidia/esm2_t12_35M_UR50D`
+- `facebook/esm2_t12_35M_UR50D`
 - `ibm-research/MoLFormer-XL-both-10pct`
 
 The regression head must be used with the exact encoder exports and preprocessing settings recorded

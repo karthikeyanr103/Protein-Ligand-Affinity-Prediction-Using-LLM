@@ -67,23 +67,32 @@ def _export_encoder(
     max_length: int,
     opset: int = 18,
     quantize: bool = False,
+    export_model_id: str = "",
 ) -> Path:
     import onnxruntime as ort
-    from transformers import AutoModel, AutoModelForMaskedLM
+    from transformers import AutoModel
 
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
-    tokenizer = _load_tokenizer(model_id)
-    tokenizer.save_pretrained(output)
+    resolved_model_id = export_model_id or model_id
 
     if encoder_type == "esm2":
-        loaded = AutoModelForMaskedLM.from_pretrained(
-            model_id,
-            trust_remote_code=True,
+        from transformers import EsmModel, EsmTokenizer
+
+        if resolved_model_id.startswith("nvidia/"):
+            raise ValueError(
+                "NVIDIA ESM-2 uses Transformer Engine custom CUDA layers and cannot "
+                "be exported through the portable ESM ONNX path. Use "
+                "facebook/esm2_t12_35M_UR50D."
+            )
+        tokenizer = EsmTokenizer.from_pretrained(resolved_model_id)
+        model = EsmModel.from_pretrained(
+            resolved_model_id,
             torch_dtype=torch.float32,
-        )
-        loaded.config.save_pretrained(output)
-        model = getattr(loaded, "base_model", loaded).eval()
+            attn_implementation="eager",
+        ).eval()
+        tokenizer.save_pretrained(output)
+        model.config.save_pretrained(output)
         wrapper = Esm2EmbeddingWrapper(model).eval()
         tokens = tokenizer(
             [example],
@@ -102,8 +111,10 @@ def _export_encoder(
         filename = "esm2_encoder.onnx"
         pooling = "mean_amino_acid_tokens"
     elif encoder_type == "molformer":
+        tokenizer = _load_tokenizer(resolved_model_id)
+        tokenizer.save_pretrained(output)
         model = AutoModel.from_pretrained(
-            model_id,
+            resolved_model_id,
             deterministic_eval=True,
             trust_remote_code=True,
             torch_dtype=torch.float32,
@@ -185,7 +196,8 @@ def _export_encoder(
     (output / "export_metadata.json").write_text(
         json.dumps(
             {
-                "model_id": model_id,
+                "model_id": resolved_model_id,
+                "requested_model_id": model_id,
                 "encoder_type": encoder_type,
                 "output": "embedding",
                 "pooling": pooling,
@@ -208,6 +220,7 @@ def export_esm2_onnx(
     max_length: int = 1024,
     opset: int = 18,
     quantize: bool = False,
+    export_model_id: str = "",
 ) -> Path:
     return _export_encoder(
         model_id,
@@ -217,6 +230,7 @@ def export_esm2_onnx(
         max_length,
         opset,
         quantize,
+        export_model_id,
     )
 
 
@@ -240,7 +254,15 @@ def export_molformer_onnx(
 
 def esm2_main() -> None:
     parser = argparse.ArgumentParser(description="Export pooled ESM-2 embeddings to ONNX")
-    parser.add_argument("--model-id", default="nvidia/esm2_t12_35M_UR50D")
+    parser.add_argument("--model-id", default="facebook/esm2_t12_35M_UR50D")
+    parser.add_argument(
+        "--export-model-id",
+        default="",
+        help=(
+            "Optional portable checkpoint used instead of --model-id. "
+            "NVIDIA Transformer Engine checkpoints are not supported."
+        ),
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--opset", type=int, default=18)
@@ -253,6 +275,7 @@ def esm2_main() -> None:
             args.max_length,
             args.opset,
             args.quantize,
+            args.export_model_id,
         )
     )
 
